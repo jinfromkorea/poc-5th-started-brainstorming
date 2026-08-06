@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ACE Upgrade Tool</title>
+  <link rel="stylesheet" href="assets/app.css" />
+</head>
+<body>
+  <header>
+    <h1>ACE Upgrade Tool</h1>
+    <p class="subtitle">사내 Maven 시스템 &rarr; Java 21 / Spring Boot 4.1 / Spring Cloud 2025.1 / Spring AI 2.0 마이그레이션 + OSS 취약점 해소</p>
+  </header>
+
+  <main>
+    <section id="connection-panel" class="card">
+      <h2>연결 설정</h2>
+      <div class="field-row">
+        <label for="api-base">API 서버 주소</label>
+        <input id="api-base" type="text" placeholder="http://127.0.0.1:8010" />
+      </div>
+      <div class="field-row">
+        <label for="api-token">API 토큰 (X-API-Token, 설정된 경우만)</label>
+        <input id="api-token" type="password" placeholder="비어있으면 인증 없이 요청" />
+      </div>
+    </section>
+
+    <section id="job-form-panel" class="card">
+      <h2>새 작업 시작</h2>
+      <form id="job-form">
+        <div class="field-row">
+          <span class="label">소스 유형</span>
+          <label class="radio-label"><input type="radio" name="source-type" value="git" checked /> Git URL</label>
+          <label class="radio-label"><input type="radio" name="source-type" value="zip" /> ZIP 업로드</label>
+        </div>
+
+        <div class="field-row" id="git-fields">
+          <label for="git-url">Git URL</label>
+          <input id="git-url" type="text" placeholder="https://git.example.com/team/service.git" />
+          <label for="git-ref">브랜치/태그 (선택)</label>
+          <input id="git-ref" type="text" placeholder="main" />
+        </div>
+
+        <div class="field-row hidden" id="zip-fields">
+          <label for="zip-file">ZIP 파일</label>
+          <input id="zip-file" type="file" accept=".zip" />
+        </div>
+
+        <div class="field-row">
+          <label for="output-version">출력 아티팩트 버전 (선택, 예: 1.0.0)</label>
+          <input id="output-version" type="text" placeholder="비어있으면 원본 버전 유지" />
+        </div>
+
+        <div class="field-row">
+          <label class="checkbox-label"><input id="run-stage1" type="checkbox" checked /> 1단계: 스택 마이그레이션 실행</label>
+          <label class="checkbox-label"><input id="run-stage2" type="checkbox" /> 2단계: 개별 OSS 취약점(CVE) 스캔/패치 실행</label>
+        </div>
+
+        <button type="submit" id="submit-btn">작업 시작</button>
+      </form>
+      <p id="form-error" class="error hidden"></p>
+    </section>
+
+    <section id="progress-panel" class="card hidden">
+      <h2>진행 상황</h2>
+      <div class="field-row">
+        <span class="label">작업 ID</span>
+        <code id="job-id-display"></code>
+        <span id="status-badge" class="badge status-queued">queued</span>
+      </div>
+      <div id="log-list" class="log-list"></div>
+    </section>
+
+    <section id="artifacts-panel" class="card hidden">
+      <h2>결과물</h2>
+      <div class="artifact-buttons">
+        <button id="view-diff-btn" type="button" disabled>diff 보기</button>
+        <button id="view-report-btn" type="button" disabled>report 보기</button>
+      </div>
+      <div id="handoff-list" class="artifact-buttons"></div>
+      <div id="artifact-viewer" class="artifact-viewer hidden">
+        <div class="artifact-viewer-toolbar">
+          <span id="artifact-viewer-title"></span>
+          <button id="copy-artifact-btn" type="button">복사</button>
+          <button id="download-artifact-btn" type="button">다운로드</button>
+        </div>
+        <pre id="artifact-viewer-content"></pre>
+      </div>
+    </section>
+  </main>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>

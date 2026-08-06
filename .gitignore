@@ -1,0 +1,27 @@
+# Backend runtime data / secrets
+backend/.env
+backend/app/data/
+backend/data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.venv312/
+*.egg-info/
+.pytest_cache/
+.pytest_tmp/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+#
+data/*.zip
+draft/

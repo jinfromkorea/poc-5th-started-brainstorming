@@ -1,0 +1,12 @@
+// Minimal fixture with no pom.xml, used only to exercise the
+// "Gradle detected -> out of scope" branch of maven_detect.detect_maven_project.
+plugins {
+    id 'java'
+}
+
+group = 'com.example'
+version = '1.0.0'
+
+repositories {
+    mavenCentral()
+}

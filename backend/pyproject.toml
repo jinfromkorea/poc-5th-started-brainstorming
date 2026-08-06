@@ -1,0 +1,58 @@
+[project]
+name = "ace-upgrade-tool"
+version = "0.1.0"
+description = "사내 Maven 시스템을 Java 21 / Spring Boot 4.1 / Spring Cloud 2025.1 / Spring AI 2.0으로 마이그레이션하고, 남은 개별 OSS 취약점을 패치하는 로컬 실행 도구"
+requires-python = ">=3.11"
+readme = "README.md"
+
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "sse-starlette>=2.1",
+    "sqlalchemy>=2.0",
+    "lxml>=5.3",
+    "python-multipart>=0.0.12",
+    "pyyaml>=6.0",
+    "httpx>=0.27",
+    "tenacity>=9.0",
+    "langchain>=0.3",
+    "langchain-openai>=0.2",
+    "langgraph>=0.2",
+    "langsmith>=0.1",
+    "deepagents>=0.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "ruff>=0.7",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: real mvn/git/java integration tests (no network/LLM required)",
+    "external: requires network + real credentials (trivy DB, NVD API, OpenAI, LangSmith)",
+]
+testpaths = ["tests"]
+addopts = "-m 'not slow and not external'"
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# B008: FastAPI's Depends()/Header()/etc-in-default-args is the framework's
+# own idiom, not a bug -- every router in this project will trigger it.
+ignore = ["B008"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]

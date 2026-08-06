@@ -1,0 +1,78 @@
+"""Thin async wrappers around the `mvn` invocations this tool needs:
+compile/test/verify (build gates), versions:set (output artifact version,
+spec: "출력 아티팩트 버전 설정"), and help:effective-pom (version detection --
+resolves the full local+remote parent/BOM inheritance chain, which a static
+read of the project's own pom.xml alone cannot do when it inherits from an
+external parent not present in the ingested source).
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from pathlib import Path
+
+from app.config import Settings
+from app.mvnrewrite.subprocess_runner import SubprocessResult, run_subprocess
+
+_BATCH = ["mvn", "-B"]  # -B: batch mode, never prompts interactively
+
+
+async def mvn_compile(
+    work_dir: Path, settings: Settings, log_path: Path | None = None, on_line: Callable[[str], None] | None = None
+) -> SubprocessResult:
+    return await run_subprocess([*_BATCH, "compile"], work_dir, settings, log_path=log_path, on_line=on_line)
+
+
+async def mvn_test(
+    work_dir: Path, settings: Settings, log_path: Path | None = None, on_line: Callable[[str], None] | None = None
+) -> SubprocessResult:
+    return await run_subprocess([*_BATCH, "test"], work_dir, settings, log_path=log_path, on_line=on_line)
+
+
+async def mvn_verify(
+    work_dir: Path, settings: Settings, log_path: Path | None = None, on_line: Callable[[str], None] | None = None
+) -> SubprocessResult:
+    return await run_subprocess([*_BATCH, "verify"], work_dir, settings, log_path=log_path, on_line=on_line)
+
+
+async def mvn_versions_set(
+    work_dir: Path,
+    new_version: str,
+    settings: Settings,
+    log_path: Path | None = None,
+    on_line: Callable[[str], None] | None = None,
+) -> SubprocessResult:
+    """org.codehaus.mojo:versions-maven-plugin -- groupId is one of Maven's
+    default plugin groups, so the short goal name `versions:set` resolves
+    without full coordinates (unlike OpenRewrite, see rewrite_client.py)."""
+    return await run_subprocess(
+        [*_BATCH, "versions:set", f"-DnewVersion={new_version}", "-DgenerateBackupPoms=false"],
+        work_dir,
+        settings,
+        log_path=log_path,
+        on_line=on_line,
+    )
+
+
+async def mvn_effective_pom(
+    work_dir: Path,
+    output_path: Path,
+    settings: Settings,
+    log_path: Path | None = None,
+    on_line: Callable[[str], None] | None = None,
+) -> Path:
+    """Writes the fully-resolved effective POM (parent chain + BOM property
+    interpolation all resolved) to output_path and returns it. This is how
+    version detection gets real values even when e.g. spring-boot.version is
+    only declared in an external parent POM not present in the ingested
+    source."""
+    result = await run_subprocess(
+        [*_BATCH, "help:effective-pom", f"-Doutput={output_path}"],
+        work_dir,
+        settings,
+        log_path=log_path,
+        on_line=on_line,
+    )
+    if result.returncode != 0 or not output_path.exists():
+        raise RuntimeError(f"mvn help:effective-pom failed in {work_dir} (exit {result.returncode}):\n{result.output}")
+    return output_path

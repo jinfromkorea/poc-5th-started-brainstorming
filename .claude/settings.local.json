@@ -1,0 +1,53 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(grep -A2 \"spring-boot-dependencies\" /tmp/mvn_probe/effective.xml | head -10 *)",
+      "Read(//tmp/mvn_probe/**)",
+      "Read(//tmp/rewrite_probe/**)",
+      "Bash(rm -rf ace-util/target ace-ai/target ace-common/target)",
+      "Bash(timeout 180 mvn -B -U org.openrewrite.maven:rewrite-maven-plugin:RELEASE:run -Drewrite.activeRecipes=org.openrewrite.java.migrate.UpgradeToJava21 -Drewrite.recipeArtifactCoordinates=org.openrewrite.recipe:rewrite-migrate-java:RELEASE)",
+      "Bash(rm -rf /c/workspace/poc-5th/backend/.pytest_tmp* /tmp/mvn_probe /tmp/rewrite_probe *)",
+      "Bash(rm -rf .pytest_tmp* *)",
+      "Bash(python -)",
+      "Bash(tasklist //FI \"IMAGENAME eq java.exe\")",
+      "Bash(timeout 60 mvn -B versions:use-dep-version -Dincludes=org.apache.commons:commons-lang3 -DdepVersion=3.19.0 -DforceVersion=true)",
+      "Bash(timeout 60 mvn -B versions:set-property -Dproperty=commons-lang3.version -DnewVersion=3.19.0)",
+      "Bash(taskkill //PID 17768 //F)",
+      "Bash(taskkill //PID 17856 //F)",
+      "Bash(taskkill //PID 18056 //F)",
+      "Bash(taskkill //PID 18256 //F)",
+      "Bash(taskkill //PID 18912 //F)",
+      "Bash(rm -rf .pytest_tmp* 2>&1 | tail -5; echo done)",
+      "Bash(ls -la \"/c/workspace/poc-without-template-3rd/spring-upgrade-agent/data/nvd-cache\" 2>&1)",
+      "Read(//c/workspace/poc-without-template-3rd/spring-upgrade-agent/data/nvd-cache/**)",
+      "Bash(/c/workspace/poc-5th/backend/.venv/Scripts/python.exe -c ' *)",
+      "Bash(rm -rf .pytest_tmp* /tmp/dc_probe2 2>&1 | tail -5; echo done)",
+      "Bash(sleep 2; rm -rf .pytest_tmp* 2>&1 | tail -3; echo done)",
+      "Bash(cd /c/workspace/poc-5th/backend *)",
+      "Bash(node --check /c/workspace/poc-5th/frontend/assets/app.js)",
+      "Bash(timeout 15 curl -s -N http://127.0.0.1:8123/jobs/__TRACKED_VAR__/events)",
+      "Bash(curl -s http://127.0.0.1:8123/jobs/__TRACKED_VAR__)",
+      "Bash(curl -s http://127.0.0.1:8123/jobs/__TRACKED_VAR__/artifacts)",
+      "Bash(curl -s -i http://127.0.0.1:8123/jobs/__TRACKED_VAR__/artifacts/diff)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" \"http://127.0.0.1:8123/jobs/doesnotexist/artifacts\")",
+      "Bash(curl -s -i -X OPTIONS http://127.0.0.1:8123/jobs/__TRACKED_VAR__/artifacts -H 'Origin: http://localhost:5500' -H 'Access-Control-Request-Method: GET')",
+      "Bash(python -c ' *)",
+      "Bash(ls \"C:\\\\Users\\\\jinia\\\\.claude\\\\projects\" | grep -i poc)",
+      "Read(//c/Users/jinia/.claude/projects/**)",
+      "Bash(ls -la \"C:\\\\workspace\\\\poc-5th-started-brainstorming\" 2>&1 *)",
+      "Read(//c/workspace/**)",
+      "Bash(python -m pytest -q)",
+      "Bash(./.venv/Scripts/python.exe -m pytest -q)",
+      "Bash(./.venv/Scripts/python.exe -m pytest -q tests/unit/test_zip_source.py::test_extracts_simple_zip)",
+      "Bash(./.venv/Scripts/python.exe -c ' *)",
+      "Bash(./.venv312/Scripts/python.exe -c ' *)",
+      "Bash(./backend/.venv312/Scripts/python.exe -c ' *)",
+      "Bash(powershell -NoProfile -Command \"Get-CimInstance Win32_Process -Filter \\\\\"Name='python.exe'\\\\\" | Select-Object ProcessId, CommandLine | Format-List\")",
+      "Bash(powershell -NoProfile -Command \"Get-NetTCPConnection -LocalPort 8010 -State Listen | Select-Object LocalAddress, LocalPort, OwningProcess\")"
+    ],
+    "additionalDirectories": [
+      "C:\\workspace\\poc-5th\\backend"
+    ]
+  }
+}

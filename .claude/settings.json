@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/c/workspace/poc-5th/backend/.venv/Scripts/python.exe -c ' *)",
+      "Bash(cygpath -w /tmp/scan_probe/trivy-result.json)"
+    ]
+  }
+}
