@@ -213,7 +213,7 @@ async def test_ingest_failure_marks_job_failed(monkeypatch, settings, db, job_pa
         assert "Gradle" in job.error_message
 
 
-async def _async_noop_writes_file(work_dir, output_path, settings_):
+async def _async_noop_writes_file(work_dir, output_path, settings_, log_path=None):
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("<projects><project/></projects>", encoding="utf-8")
     return output_path

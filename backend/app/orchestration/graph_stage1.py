@@ -23,6 +23,7 @@ from app.config import Settings
 from app.mvnrewrite.mvn_client import mvn_compile
 from app.mvnrewrite.recipe_catalog import RecipeCatalog, RecipeStep
 from app.mvnrewrite.rewrite_client import run_openrewrite_recipes
+from app.mvnrewrite.subprocess_runner import build_log_path
 from app.orchestration.callbacks import LocalLLMLogger
 from app.orchestration.llm import get_chat_model
 from app.orchestration.planning import PlanStep
@@ -84,12 +85,17 @@ def build_stage1_graph(settings: Settings):
 
     async def apply_node(state: Stage1State) -> dict:
         work_dir = Path(state["work_dir"])
-        result = await run_openrewrite_recipes(work_dir, [state["recipe"]], [state["artifact"]], settings)
+        output_dir = work_dir.parent / "output"  # sibling of work/ -- see ingest/workspace.py's WorkspacePaths
+        recipe_label = (state["recipe"] or "recipe").rsplit(".", 1)[-1]
+        log_path = build_log_path(output_dir, "stage1", f"openrewrite-{recipe_label}")
+        result = await run_openrewrite_recipes(work_dir, [state["recipe"]], [state["artifact"]], settings, log_path=log_path)
         return {"last_build_output": f"[openrewrite exit={result.returncode}]\n{result.output}"}
 
     async def verify_node(state: Stage1State) -> dict:
         work_dir = Path(state["work_dir"])
-        result = await mvn_compile(work_dir, settings)
+        output_dir = work_dir.parent / "output"
+        log_path = build_log_path(output_dir, "stage1", "mvn-compile")
+        result = await mvn_compile(work_dir, settings, log_path=log_path)
         if result.returncode == 0:
             return {"status": "success", "last_build_output": result.output}
         return {"last_build_output": result.output}
@@ -105,7 +111,7 @@ def build_stage1_graph(settings: Settings):
         work_dir = Path(state["work_dir"])
         output_dir = work_dir.parent / "output"  # sibling of work/ -- see ingest/workspace.py's WorkspacePaths
         model = get_chat_model(settings)
-        tools = build_tools(work_dir, settings)
+        tools = build_tools(work_dir, settings, output_dir, stage="stage1")
         agent = create_agent(model, tools, system_prompt=_AI_FIX_SYSTEM_PROMPT)
 
         result = await agent.ainvoke(
@@ -119,7 +125,7 @@ def build_stage1_graph(settings: Settings):
                     )
                 ]
             },
-            config={"callbacks": [LocalLLMLogger(output_dir, stage="stage1")]},
+            config={"callbacks": [LocalLLMLogger(output_dir, stage="stage1", model=settings.llm_model)]},
         )
         return {"attempt": state["attempt"] + 1, "messages": result["messages"]}
 

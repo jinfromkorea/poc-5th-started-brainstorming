@@ -1,4 +1,4 @@
-# ACE Upgrade Tool
+# Maven Stack Upgrade Tool
 
 사내 Maven 시스템을 **Java 21 / Spring Boot 4.1 / Spring Cloud 2025.1 / Spring AI 2.0**으로 마이그레이션하고, 남은 개별 OSS 취약점을 패치하는 도구입니다.
 

@@ -61,7 +61,7 @@ def create_job_workspace(job_id: str, settings: Settings) -> WorkspacePaths:
 
 def populate_source(paths: WorkspacePaths, spec: SourceSpec, settings: Settings) -> None:
     if isinstance(spec, GitSourceSpec):
-        clone_git(spec.url, spec.ref, paths.source, settings)
+        clone_git(spec.url, spec.ref, paths.source, settings, log_path=paths.output / "logs" / "ingest" / "git-clone.log")
     else:
         extract_zip(spec.zip_path, paths.source, settings)
         unwrap_single_top_level(paths.source)

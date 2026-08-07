@@ -51,7 +51,12 @@ def find_version_property(pom_path: Path, group_id: str, artifact_id: str) -> st
 
 
 async def patch_dependency_version(
-    work_dir: Path, group_id: str, artifact_id: str, new_version: str, settings: Settings
+    work_dir: Path,
+    group_id: str,
+    artifact_id: str,
+    new_version: str,
+    settings: Settings,
+    log_path: Path | None = None,
 ) -> SubprocessResult:
     prop_name = find_version_property(work_dir / "pom.xml", group_id, artifact_id)
     if prop_name:
@@ -65,4 +70,4 @@ async def patch_dependency_version(
             f"-DdepVersion={new_version}",
             "-DforceVersion=true",
         ]
-    return await run_subprocess(args, work_dir, settings)
+    return await run_subprocess(args, work_dir, settings, log_path=log_path)

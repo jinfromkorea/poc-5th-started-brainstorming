@@ -15,6 +15,7 @@ from app.config import Settings
 from app.mvnrewrite.mvn_client import mvn_compile
 from app.mvnrewrite.recipe_catalog import RecipeCatalog
 from app.mvnrewrite.rewrite_client import run_openrewrite_recipes
+from app.mvnrewrite.subprocess_runner import build_log_path
 
 
 class ToolPathEscapeError(Exception):
@@ -32,26 +33,72 @@ def _safe_path(work_dir: Path, relative_path: str) -> Path:
     return target
 
 
-def build_tools(work_dir: Path, settings: Settings) -> list[BaseTool]:
+def _existing_ancestor(path: Path, floor: Path) -> Path:
+    """Walk up from ``path`` to the nearest directory that actually exists,
+    never going above ``floor`` (work_dir). Used to point a hallucinated
+    path back at what's really there."""
+    probe = path
+    while not probe.exists() and probe != floor:
+        probe = probe.parent
+    return probe
+
+
+def build_tools(work_dir: Path, settings: Settings, output_dir: Path, stage: str) -> list[BaseTool]:
     @tool
     async def read_file(relative_path: str) -> str:
-        """Read a file's contents. relative_path is relative to the project root."""
-        return _safe_path(work_dir, relative_path).read_text(encoding="utf-8")
+        """Read a file's contents. relative_path is relative to the project
+        root. Returns an "Error: ..." string (does not raise) if the path
+        doesn't exist, is a directory, or isn't valid UTF-8 text -- so a
+        guessed/hallucinated path becomes a normal tool result the agent can
+        see and correct, instead of crashing the whole job."""
+        try:
+            target = _safe_path(work_dir, relative_path)
+        except ToolPathEscapeError as exc:
+            return f"Error: {exc}"
+
+        # Checked up front (not caught as IsADirectoryError/FileNotFoundError
+        # around read_text) because opening a directory raises PermissionError
+        # on Windows, not IsADirectoryError like on POSIX -- confirmed
+        # empirically. Checking .is_dir()/.exists() first is portable.
+        if target.is_dir():
+            entries = sorted(p.name for p in target.iterdir())
+            return f"Error: {relative_path} is a directory, not a file. Contents: {', '.join(entries)}"
+        if not target.exists():
+            ancestor = _existing_ancestor(target.parent, work_dir)
+            entries = sorted(p.name for p in ancestor.iterdir()) if ancestor.is_dir() else []
+            hint = f" Real entries under {ancestor.relative_to(work_dir)}: {', '.join(entries)}" if entries else ""
+            return f"Error: file not found: {relative_path}.{hint}"
+
+        try:
+            return target.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            return f"Error: {relative_path} exists but is not valid UTF-8 text (likely a binary file) -- cannot read it with this tool."
+        except OSError as exc:
+            return f"Error: could not read {relative_path}: {exc}"
 
     @tool
     async def edit_file(relative_path: str, content: str) -> str:
         """Overwrite a file with new content (creating parent directories if
         needed). relative_path is relative to the project root. Provide the
-        FULL new file content, not a diff."""
-        target = _safe_path(work_dir, relative_path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
-        return f"wrote {len(content)} chars to {relative_path}"
+        FULL new file content, not a diff. Returns an "Error: ..." string
+        (does not raise) if the path escapes the project or can't be
+        written -- so a bad path becomes a normal tool result the agent can
+        see and correct, instead of crashing the whole job."""
+        try:
+            target = _safe_path(work_dir, relative_path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+            return f"wrote {len(content)} chars to {relative_path}"
+        except ToolPathEscapeError as exc:
+            return f"Error: {exc}"
+        except OSError as exc:
+            return f"Error: could not write {relative_path}: {exc}"
 
     @tool
     async def run_build() -> str:
         """Run `mvn compile` against the project and return exit code + combined output."""
-        result = await mvn_compile(work_dir, settings)
+        log_path = build_log_path(output_dir, stage, "ai-fix-build")
+        result = await mvn_compile(work_dir, settings, log_path=log_path)
         return f"exit={result.returncode}\n{result.output}"
 
     @tool
@@ -60,7 +107,8 @@ def build_tools(work_dir: Path, settings: Settings) -> list[BaseTool]:
         recipe class name (e.g. org.openrewrite.java.migrate.UpgradeToJava21).
         `artifact` is the Maven coordinates of the artifact it lives in
         (e.g. org.openrewrite.recipe:rewrite-migrate-java:RELEASE)."""
-        result = await run_openrewrite_recipes(work_dir, [recipe], [artifact], settings)
+        log_path = build_log_path(output_dir, stage, "ai-fix-recipe")
+        result = await run_openrewrite_recipes(work_dir, [recipe], [artifact], settings, log_path=log_path)
         return f"exit={result.returncode}\n{result.output}"
 
     @tool

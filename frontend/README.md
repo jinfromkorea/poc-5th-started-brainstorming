@@ -1,4 +1,4 @@
-# ACE Upgrade Tool — Frontend
+# Maven Stack Upgrade Tool — Frontend
 
 백엔드([`../backend`](../backend))의 REST/SSE API만 호출하는 순수 정적 HTML 클라이언트입니다. 빌드 단계가 없습니다 — 백엔드와 독립적으로 배포/수정할 수 있도록 일부러 이렇게 만들었습니다.
 

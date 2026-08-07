@@ -27,6 +27,7 @@ from app.checkpoint.git_repo import changed_file_count
 from app.config import Settings
 from app.mvnrewrite.dependency_patch import patch_dependency_version
 from app.mvnrewrite.mvn_client import mvn_verify
+from app.mvnrewrite.subprocess_runner import build_log_path
 from app.orchestration.callbacks import LocalLLMLogger
 from app.orchestration.llm import get_chat_model
 from app.orchestration.state2 import Stage2State
@@ -46,13 +47,19 @@ def build_stage2_graph(settings: Settings):
         if state["fix_version"] is None:
             return {}  # no known fix version -- nothing mechanical to try, straight to verify (will fail) -> ai_fix
         work_dir = Path(state["work_dir"])
+        output_dir = work_dir.parent / "output"  # sibling of work/ -- see ingest/workspace.py's WorkspacePaths
         group_id, artifact_id = state["package"].split(":", 1)
-        result = await patch_dependency_version(work_dir, group_id, artifact_id, state["fix_version"], settings)
+        log_path = build_log_path(output_dir, "stage2", f"dependency-patch-{state['cve_id']}")
+        result = await patch_dependency_version(
+            work_dir, group_id, artifact_id, state["fix_version"], settings, log_path=log_path
+        )
         return {"last_build_output": f"[dependency patch exit={result.returncode}]\n{result.output}"}
 
     async def verify_node(state: Stage2State) -> dict:
         work_dir = Path(state["work_dir"])
-        result = await mvn_verify(work_dir, settings)
+        output_dir = work_dir.parent / "output"
+        log_path = build_log_path(output_dir, "stage2", f"mvn-verify-{state['cve_id']}")
+        result = await mvn_verify(work_dir, settings, log_path=log_path)
         if result.returncode == 0:
             return {"status": "success", "last_build_output": result.output}
         return {"last_build_output": result.output}
@@ -68,7 +75,7 @@ def build_stage2_graph(settings: Settings):
         work_dir = Path(state["work_dir"])
         output_dir = work_dir.parent / "output"  # sibling of work/ -- see ingest/workspace.py's WorkspacePaths
         model = get_chat_model(settings)
-        tools = build_tools(work_dir, settings)
+        tools = build_tools(work_dir, settings, output_dir, stage="stage2")
         agent = create_agent(model, tools, system_prompt=_AI_PATCH_SYSTEM_PROMPT)
 
         fix_hint = f", a scanner-suggested fix version is {state['fix_version']}" if state["fix_version"] else ""
@@ -84,7 +91,7 @@ def build_stage2_graph(settings: Settings):
                     )
                 ]
             },
-            config={"callbacks": [LocalLLMLogger(output_dir, stage="stage2")]},
+            config={"callbacks": [LocalLLMLogger(output_dir, stage="stage2", model=settings.llm_model)]},
         )
         return {"attempt": state["attempt"] + 1, "messages": result["messages"]}
 

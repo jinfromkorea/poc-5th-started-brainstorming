@@ -1,7 +1,7 @@
 "use strict";
 
 const TERMINAL_STATUSES = new Set(["success", "needs_handoff", "failed"]);
-const STORAGE_KEYS = { apiBase: "ace-upgrade-tool.apiBase", apiToken: "ace-upgrade-tool.apiToken" };
+const STORAGE_KEYS = { apiBase: "maven-stack-upgrade-tool.apiBase", apiToken: "maven-stack-upgrade-tool.apiToken" };
 const DEFAULT_API_BASE = "http://127.0.0.1:8000";
 
 const el = (id) => document.getElementById(id);

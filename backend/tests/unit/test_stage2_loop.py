@@ -58,7 +58,7 @@ def _vuln(cve_id: str, fix_version: str | None = "1.2.4") -> Vulnerability:
 
 
 async def test_all_vulnerabilities_patched_successfully(monkeypatch, settings, work_dir):
-    async def patch_ok(work_dir_, group_id, artifact_id, new_version, settings_):
+    async def patch_ok(work_dir_, group_id, artifact_id, new_version, settings_, log_path=None):
         return SubprocessResult(returncode=0, output="patched", log_path=None)
 
     async def verify_ok(work_dir_, settings_, log_path=None, on_line=None):
@@ -83,7 +83,7 @@ async def test_all_vulnerabilities_patched_successfully(monkeypatch, settings, w
 async def test_one_failure_does_not_stop_remaining_independent_patches(monkeypatch, settings, work_dir):
     calls = {"n": 0}
 
-    async def patch_noop(work_dir_, group_id, artifact_id, new_version, settings_):
+    async def patch_noop(work_dir_, group_id, artifact_id, new_version, settings_, log_path=None):
         calls["n"] += 1
         return SubprocessResult(returncode=0, output="patched", log_path=None)
 

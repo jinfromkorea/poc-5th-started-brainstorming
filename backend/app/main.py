@@ -18,7 +18,7 @@ def create_app() -> FastAPI:
     get_job_manager(settings.max_concurrent_repos)
 
     app = FastAPI(
-        title="ACE Upgrade Tool",
+        title="Maven Stack Upgrade Tool",
         description="사내 Maven 시스템 스택 마이그레이션 / 취약점 해소 도구",
         version="0.1.0",
     )

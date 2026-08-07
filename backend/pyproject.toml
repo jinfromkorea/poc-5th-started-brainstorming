@@ -1,5 +1,5 @@
 [project]
-name = "ace-upgrade-tool"
+name = "maven-stack-upgrade-tool"
 version = "0.1.0"
 description = "사내 Maven 시스템을 Java 21 / Spring Boot 4.1 / Spring Cloud 2025.1 / Spring AI 2.0으로 마이그레이션하고, 남은 개별 OSS 취약점을 패치하는 로컬 실행 도구"
 requires-python = ">=3.11"

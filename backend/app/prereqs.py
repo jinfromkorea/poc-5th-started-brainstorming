@@ -30,6 +30,8 @@ def _run_version(binary: str, args: list[str]) -> tuple[bool, str]:
             [exe, *args],
             capture_output=True,
             text=True,
+            encoding="utf-8",  # not locale.getpreferredencoding() (cp949 on Korean
+            errors="replace",  # Windows) -- see checkpoint/git_repo.py's _run_git for why
             timeout=15,
             check=False,
         )

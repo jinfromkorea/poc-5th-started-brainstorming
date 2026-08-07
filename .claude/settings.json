@@ -2,7 +2,28 @@
   "permissions": {
     "allow": [
       "Bash(/c/workspace/poc-5th/backend/.venv/Scripts/python.exe -c ' *)",
-      "Bash(cygpath -w /tmp/scan_probe/trivy-result.json)"
+      "Bash(cygpath -w /tmp/scan_probe/trivy-result.json)",
+      "Bash(.venv312/Scripts/python.exe -c ' *)",
+      "Read(//c/workspace/poc-3rd-improved/spring-upgrade-agent/data/logs/llm/**)",
+      "Bash(awk '{ print NR\": \"length\\($0\\) }' \"C:\\\\workspace\\\\poc-3rd-improved\\\\spring-upgrade-agent\\\\data\\\\logs\\\\llm\\\\run_7_1_migration_planner.md\")",
+      "Bash(sort -t: -k2 -n -r)",
+      "Bash(F=\"C:\\\\workspace\\\\poc-3rd-improved\\\\spring-upgrade-agent\\\\data\\\\logs\\\\llm\\\\run_7_1_migration_planner.md\" *)",
+      "Bash(.venv312/Scripts/python.exe -m pytest tests/unit/test_callbacks.py -q --basetemp=\"/c/pytesttmp\")",
+      "Read(//c/pytesttmp_sample/logs/stage1/**)",
+      "Bash(find /c/pytesttmp_sample -name \"*.md\")",
+      "Read(//c/pytesttmp_sample/**)",
+      "Read(//c/pytesttmp_sample/logs/stage1/llm/**)",
+      "Bash(rm -rf /c/pytesttmp_sample)",
+      "Bash(ls \"C:\\\\Users\\\\jinia\\\\.claude\\\\projects\\\\c--workspace-poc-5th-started-brainstorming\\\\memory\\\\\" 2>&1)",
+      "Read(//c/Users/jinia/.claude/projects/c--workspace-poc-5th-started-brainstorming/**)",
+      "Bash(rm -rf /c/pytesttmp_tools)",
+      "Bash(.venv312/Scripts/python.exe -m pytest tests/unit/test_tools.py -q --basetemp=\"/c/pytesttmp\")",
+      "Bash(rm \"C:\\\\Users\\\\jinia\\\\.claude\\\\projects\\\\c--workspace-poc-5th-started-brainstorming\\\\memory\\\\ai_fix_tool_error_crashes_job.md\" 2>&1 *)",
+      "Bash(rm -f \"/c/Users/jinia/.claude/projects/c--workspace-poc-5th-started-brainstorming/memory/ai_fix_tool_error_crashes_job.md\")",
+      "Read(//c/Users/jinia/.claude/projects/c--workspace-poc-5th-started-brainstorming/memory//**)"
+    ],
+    "additionalDirectories": [
+      "C:\\pytesttmp_sample"
     ]
   }
 }

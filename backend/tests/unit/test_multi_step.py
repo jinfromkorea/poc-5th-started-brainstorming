@@ -51,7 +51,7 @@ def _detected(spring_boot="3.4.0", java="21"):
 
 
 async def test_all_steps_succeed_checkpoints_each_one(monkeypatch, settings, work_dir):
-    async def always_succeeds(work_dir_, settings_, log_path=None, on_line=None):
+    async def always_succeeds(*args, **kwargs):
         return SubprocessResult(returncode=0, output="ok", log_path=None)
 
     monkeypatch.setattr("app.orchestration.graph_stage1.mvn_compile", always_succeeds)
@@ -79,7 +79,7 @@ async def test_all_steps_succeed_checkpoints_each_one(monkeypatch, settings, wor
 async def test_middle_step_fails_rolls_back_and_stops(monkeypatch, settings, work_dir):
     openrewrite_calls = {"n": 0}
 
-    async def counting_openrewrite(work_dir_, settings_, log_path=None, on_line=None):
+    async def counting_openrewrite(*args, **kwargs):
         openrewrite_calls["n"] += 1
         return SubprocessResult(returncode=0, output="applied", log_path=None)
 

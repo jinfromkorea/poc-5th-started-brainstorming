@@ -9,11 +9,14 @@ the diff naturally contains only verified changes.
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from pathlib import Path
 
 from app.config import Settings
 from app.procenv import build_subprocess_env, resolve_executable
+
+logger = logging.getLogger(__name__)
 
 
 class GitCheckpointError(Exception):
@@ -21,11 +24,22 @@ class GitCheckpointError(Exception):
 
 
 def _run_git(work_dir: Path, args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess:
+    # encoding="utf-8" (not the default locale.getpreferredencoding(), which
+    # is cp949 on Korean Windows) -- git's own output is UTF-8 regardless of
+    # OS locale, and cp949 can't decode arbitrary UTF-8 bytes, which
+    # otherwise crashes Popen's Windows-only background reader thread
+    # (confirmed empirically: UnicodeDecodeError in Lib/subprocess.py's
+    # _readerthread). errors="replace" so a still-unexpected byte degrades
+    # to a garbled character instead of crashing the whole call.
+    executable = resolve_executable("git")
+    logger.info("실행: %s (cwd=%s)", " ".join([executable, *args]), work_dir)
     proc = subprocess.run(
-        [resolve_executable("git"), *args],
+        [executable, *args],
         cwd=work_dir,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env=env,
         check=False,
     )

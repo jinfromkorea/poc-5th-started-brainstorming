@@ -44,7 +44,12 @@
       "Bash(./.venv312/Scripts/python.exe -c ' *)",
       "Bash(./backend/.venv312/Scripts/python.exe -c ' *)",
       "Bash(powershell -NoProfile -Command \"Get-CimInstance Win32_Process -Filter \\\\\"Name='python.exe'\\\\\" | Select-Object ProcessId, CommandLine | Format-List\")",
-      "Bash(powershell -NoProfile -Command \"Get-NetTCPConnection -LocalPort 8010 -State Listen | Select-Object LocalAddress, LocalPort, OwningProcess\")"
+      "Bash(powershell -NoProfile -Command \"Get-NetTCPConnection -LocalPort 8010 -State Listen | Select-Object LocalAddress, LocalPort, OwningProcess\")",
+      "Bash(.venv312/Scripts/python.exe -m pytest tests/unit/test_pipeline.py tests/unit/test_streaming.py tests/integration/test_jobs_api.py tests/integration/test_artifacts_api.py -q)",
+      "Bash(.venv312/Scripts/python.exe -m pytest tests/unit/test_pipeline.py tests/unit/test_streaming.py tests/integration/test_jobs_api.py tests/integration/test_artifacts_api.py -q --basetemp=\"/c/Users/jinia/AppData/Local/Temp/claude/c--workspace-poc-5th-started-brainstorming/a6d5a07b-05da-4f93-814a-0b3ba95e984e/scratchpad/pytest_tmp\")",
+      "Bash(.venv312/Scripts/python.exe -m pytest -q --basetemp=\"/c/Users/jinia/AppData/Local/Temp/claude/c--workspace-poc-5th-started-brainstorming/a6d5a07b-05da-4f93-814a-0b3ba95e984e/scratchpad/pytest_tmp2\")",
+      "Bash(mkdir -p /c/pytesttmp)",
+      "Bash(.venv312/Scripts/python.exe -m pytest -q --basetemp=\"/c/pytesttmp\")"
     ],
     "additionalDirectories": [
       "C:\\workspace\\poc-5th\\backend"

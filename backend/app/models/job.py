@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from sqlalchemy import JSON, DateTime, Integer, String, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.models.db import Base
 
@@ -39,6 +39,20 @@ class Job(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC)
     )
+
+
+def next_job_id(db: Session) -> str:
+    """Sequential id local to this jobs.db (e.g. "7") instead of an opaque
+    UUID -- this is a single-developer local tool where "which numbered run
+    was this" reads better than a 32-char hex blob, and it also becomes the
+    job's directory name under JOBS_DATA_DIR (source/work/output), so a
+    short number is much easier to spot in a file browser. Counts existing
+    rows rather than keeping a separate counter table; safe because jobs are
+    never deleted (there's no delete endpoint) and job creation is handled
+    synchronously on a single event loop (see api/routers/jobs.py), so two
+    requests can never read the same count before either commits."""
+    count = db.query(func.count(Job.id)).scalar() or 0
+    return str(count + 1)
 
 
 class JobEvent(Base):

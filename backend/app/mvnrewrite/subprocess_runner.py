@@ -7,12 +7,16 @@ wires this to SSE) and an optional log file, and enforces a timeout.
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 from app.config import Settings
 from app.procenv import build_subprocess_env, resolve_executable
+
+logger = logging.getLogger(__name__)
 
 
 class SubprocessTimeoutError(Exception):
@@ -24,6 +28,19 @@ class SubprocessResult:
     returncode: int
     output: str
     log_path: Path | None
+
+
+def build_log_path(output_dir: Path, stage: str, label: str) -> Path:
+    """``output/logs/<stage>/<millis>-<label>.log`` -- one file per external
+    tool invocation. Timestamp-prefixed (not just ``<label>.log``) because a
+    single job can run the same label more than once (e.g. one `mvn compile`
+    per Stage 1 step, one OpenRewrite recipe per AI-fix retry), so a fixed
+    name would silently overwrite the previous attempt's log. Mirrors the
+    local LLM call log's naming convention (see
+    orchestration/callbacks.LocalLLMLogger) so a job's whole logs/ tree
+    sorts chronologically within each stage folder."""
+    millis = int(time.time() * 1000)
+    return output_dir / "logs" / stage / f"{millis}-{label}.log"
 
 
 async def run_subprocess(
@@ -49,6 +66,10 @@ async def run_subprocess(
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
     executable = resolve_executable(args[0])
+    command_display = " ".join([executable, *args[1:]])
+    logger.info("실행: %s (cwd=%s)", command_display, cwd)
+    started_at = time.monotonic()
+
     proc = await asyncio.create_subprocess_exec(
         executable,
         *args[1:],
@@ -72,6 +93,14 @@ async def run_subprocess(
             if log_file is not None:
                 log_file.write(line + "\n")
                 log_file.flush()
+            else:
+                # No log file backing this call -- echo to console live so
+                # the output isn't lost entirely. When a log file IS given,
+                # skip the echo: the "실행: ..."/"종료: ..." lines already
+                # say something is happening, and every line is sitting in
+                # that file for whoever wants the detail, so mirroring it
+                # into the console too is just noise.
+                logger.info("  | %s", line)
             if on_line is not None:
                 on_line(line)
 
@@ -81,9 +110,13 @@ async def run_subprocess(
     except TimeoutError as exc:
         proc.kill()
         await proc.wait()
+        logger.warning("시간 초과: %s (%ds 경과, cwd=%s)", command_display, timeout, cwd)
         raise SubprocessTimeoutError(f"{' '.join(args)!r} timed out after {timeout}s in {cwd}") from exc
     finally:
         if log_file is not None:
             log_file.close()
+
+    elapsed = time.monotonic() - started_at
+    logger.info("종료: %s (exit=%s, %.1fs)", command_display, returncode, elapsed)
 
     return SubprocessResult(returncode=returncode, output="\n".join(lines), log_path=log_path)

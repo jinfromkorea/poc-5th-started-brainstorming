@@ -15,9 +15,9 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.api.deps import require_api_token
 from app.config import Settings, get_settings
-from app.ingest.workspace import GitSourceSpec, ZipSourceSpec, new_job_id
+from app.ingest.workspace import GitSourceSpec, ZipSourceSpec
 from app.models.db import get_db_session, session_factory
-from app.models.job import Job
+from app.models.job import Job, next_job_id
 from app.orchestration.concurrency import get_job_manager
 from app.orchestration.pipeline import run_pipeline
 from app.schemas.job import JobCreateResponse, JobStatusResponse
@@ -43,7 +43,7 @@ async def create_job(
             detail="provide exactly one of git_url or zip_file",
         )
 
-    job_id = new_job_id()
+    job_id = next_job_id(db)
 
     if git_url:
         spec = GitSourceSpec(url=git_url, ref=git_ref)

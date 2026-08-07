@@ -6,6 +6,8 @@ the DB. This is what concurrency.JobManager schedules per job.
 
 from __future__ import annotations
 
+import logging
+
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.checkpoint.git_repo import diff_since
@@ -15,11 +17,14 @@ from app.ingest.workspace import SourceSpec, ingest
 from app.models.job import Job
 from app.mvnrewrite.mvn_client import mvn_effective_pom
 from app.mvnrewrite.pom_parser import extract_versions
+from app.mvnrewrite.subprocess_runner import build_log_path
 from app.orchestration.multi_step import run_stage1_migration
 from app.orchestration.stage2_loop import run_stage2_patches
 from app.scan.combined import run_combined_scan
 from app.streaming.events import emit_event
 from app.versioning.artifact_version import apply_output_version
+
+logger = logging.getLogger(__name__)
 
 
 async def _set_job_status(
@@ -51,6 +56,18 @@ async def run_pipeline(
     session_factory: sessionmaker[Session],
 ) -> None:
     async def emit(event_type: str, data: dict) -> None:
+        # Mirror every SSE event into the backend's own console too -- the
+        # browser progress panel isn't always open/visible, and a developer
+        # watching the terminal otherwise has no way to tell a job is still
+        # progressing versus stuck.
+        if event_type == "log":
+            logger.info("[job %s] %s", job_id, data.get("message", ""))
+        elif event_type == "status":
+            error = data.get("error")
+            if error:
+                logger.warning("[job %s] status=%s (%s)", job_id, data.get("status"), error)
+            else:
+                logger.info("[job %s] status=%s", job_id, data.get("status"))
         await emit_event(session_factory, job_id, event_type, data)
 
     await _set_job_status(session_factory, job_id, "running")
@@ -66,7 +83,7 @@ async def run_pipeline(
 
         if output_version:
             await emit("log", {"message": f"출력 아티팩트 버전 설정: {output_version}"})
-            baseline = await apply_output_version(work_dir, output_version, settings)
+            baseline = await apply_output_version(work_dir, output_version, settings, output_dir=output_dir)
 
         report_sections: list[str] = []
         handoff_dir = output_dir / "handoff"
@@ -75,7 +92,9 @@ async def run_pipeline(
         if run_stage1:
             await emit("log", {"message": "1단계 스택 마이그레이션 시작"})
             effective_pom_path = output_dir / "effective-pom.xml"
-            await mvn_effective_pom(work_dir, effective_pom_path, settings)
+            await mvn_effective_pom(
+                work_dir, effective_pom_path, settings, log_path=build_log_path(output_dir, "ingest", "mvn-effective-pom")
+            )
             detected = extract_versions(effective_pom_path)
 
             stage1_result = await run_stage1_migration(job_id, work_dir, detected, baseline, settings)

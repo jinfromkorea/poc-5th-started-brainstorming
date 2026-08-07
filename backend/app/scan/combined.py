@@ -11,6 +11,7 @@ import asyncio
 from pathlib import Path
 
 from app.config import Settings
+from app.mvnrewrite.subprocess_runner import build_log_path
 from app.scan.dependency_check import run_dependency_check
 from app.scan.merge import (
     Vulnerability,
@@ -32,8 +33,8 @@ async def run_combined_scan(work_dir: Path, output_dir: Path, settings: Settings
     trivy_output_path = output_dir / "trivy" / "trivy-report.json"
 
     dc_result, trivy_result = await asyncio.gather(
-        run_dependency_check(work_dir, settings),
-        run_trivy_scan(work_dir, trivy_output_path, settings),
+        run_dependency_check(work_dir, settings, log_path=build_log_path(output_dir, "scan", "dependency-check")),
+        run_trivy_scan(work_dir, trivy_output_path, settings, log_path=build_log_path(output_dir, "scan", "trivy")),
     )
 
     dc_vulns: list[Vulnerability] = []
