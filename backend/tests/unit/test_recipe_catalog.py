@@ -20,6 +20,7 @@ def test_spring_boot_step_from_known_origin():
     assert step.to_version == "3.0"
     assert step.has_known_recipe is True
     assert step.confidence == "verified"
+    assert step.third_party is False  # official org.openrewrite.recipe:rewrite-spring
 
 
 def test_spring_boot_step_from_unknown_origin_is_none():
@@ -28,13 +29,15 @@ def test_spring_boot_step_from_unknown_origin_is_none():
     assert catalog.spring_boot_step_from("1.5") is None
 
 
-def test_spring_ai_step_has_no_known_recipe_yet():
+def test_spring_ai_step_has_a_known_recipe():
     catalog = RecipeCatalog.load()
 
     ai_steps = catalog.spring_ai_steps
     assert len(ai_steps) == 1
     assert ai_steps[0].to_version == "2.0"
-    assert ai_steps[0].has_known_recipe is False
+    assert ai_steps[0].has_known_recipe is True
+    assert ai_steps[0].confidence == "verified"
+    assert ai_steps[0].third_party is True  # Arconia Migrations, not org.openrewrite.recipe:*
 
 
 def test_spring_cloud_train_lookup_by_boot_version():

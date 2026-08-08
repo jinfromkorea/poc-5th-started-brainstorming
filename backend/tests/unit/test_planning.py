@@ -79,21 +79,40 @@ def test_no_spring_cloud_train_attached_when_project_does_not_use_cloud():
     assert all(s.spring_cloud_train is None for s in plan.steps if s.kind == "spring_boot")
 
 
-def test_spring_ai_with_no_known_recipe_still_gets_an_ai_bridge_step():
-    """The catalog currently has no known OpenRewrite recipe for Spring AI
-    2.0 (confidence=unverified, recipe=null) -- the planner must still add a
-    step for it (recipe=None), not omit it with no trace."""
+def test_spring_ai_step_uses_the_cataloged_recipe():
+    """The catalog has a known recipe for Spring AI 2.0 (Arconia Migrations'
+    UpgradeSpringAi_2_0, recipe_catalog.yaml) -- the planner must use it
+    rather than falling back to an AI-direct-attempt step. It's a
+    third-party (non-org.openrewrite.recipe) recipe, so the description
+    must flag that -- this is what shows up in the progress log/screen and
+    report.md (spec: 화면/로그에 서드파티임을 명시)."""
     plan = _plan(spring_ai_version="1.1.8")
     ai_steps = [s for s in plan.steps if s.kind == "spring_ai"]
     assert len(ai_steps) == 1
-    assert ai_steps[0].recipe is None
-    assert "AI 직접 시도" in ai_steps[0].description
+    assert ai_steps[0].recipe == "io.arconia.rewrite.spring.ai2.UpgradeSpringAi_2_0"
+    assert "AI 직접 시도" not in ai_steps[0].description
+    assert ai_steps[0].third_party is True
+    assert "서드파티 레시피" in ai_steps[0].description
 
 
-def test_spring_ai_step_would_be_inserted_right_after_first_4x_boot_step_if_a_recipe_existed():
-    """Exercises the insertion-point logic itself using a catalog patched
-    with a fake Spring AI recipe, independent of whether the real catalog
-    currently has one cataloged yet."""
+def test_third_party_suffix_not_shown_for_official_recipes():
+    """The Java/Spring Boot steps in job 10's plan (official
+    org.openrewrite.recipe:* recipes) must NOT get the third-party suffix
+    -- only steps actually flagged third_party in the catalog do."""
+    plan = _plan(java_version="11")
+    java_step = next(s for s in plan.steps if s.kind == "java")
+    assert java_step.third_party is False
+    assert "서드파티" not in java_step.description
+
+
+def test_spring_ai_step_is_inserted_after_all_spring_boot_steps():
+    """Spring AI must land after Spring Boot has fully reached its target,
+    not right after Boot first touches the 4.x line -- otherwise a failed
+    Spring AI step (run_stage1_migration stops the whole migration at the
+    first needs_handoff) could block an still-outstanding, more
+    foundational Boot hop (e.g. a catalog-gap hop like 4.0 -> 4.1) from ever
+    being attempted. Uses a catalog patched with a fake Spring AI recipe,
+    independent of whatever the real catalog currently has cataloged."""
     from app.mvnrewrite.recipe_catalog import RecipeStep
 
     class _PatchedCatalog(RecipeCatalog):
@@ -108,10 +127,47 @@ def test_spring_ai_step_would_be_inserted_right_after_first_4x_boot_step_if_a_re
         detected, target_boot="4.1", target_java="21", target_ai="2.0", catalog=_PatchedCatalog(CATALOG._data)
     )
 
-    kinds_and_versions = [(s.kind, s.target_version) for s in plan.steps]
-    boot_40_index = kinds_and_versions.index(("spring_boot", "4.0"))
-    assert kinds_and_versions[boot_40_index + 1] == ("spring_ai", "2.0")
-    assert kinds_and_versions.count(("spring_ai", "2.0")) == 1  # only inserted once
+    kinds = [s.kind for s in plan.steps]
+    assert kinds[-1] == "spring_ai"  # after every spring_boot (and java) step, not in the middle
+    assert kinds.count("spring_ai") == 1  # only inserted once
+
+
+def test_spring_ai_step_still_inserted_when_already_at_target_boot():
+    """A project already sitting on Boot 4.x needs no Boot steps at all --
+    but if it still uses an old Spring AI version, that must still get a
+    step (previously silently dropped, since the old insertion logic only
+    ever fired while iterating actual Boot hops)."""
+    plan = _plan(spring_boot_version="4.1.0", spring_ai_version="1.1.8")
+    assert all(s.kind != "spring_boot" for s in plan.steps)
+    ai_steps = [s for s in plan.steps if s.kind == "spring_ai"]
+    assert len(ai_steps) == 1
+    assert ai_steps[0].recipe == "io.arconia.rewrite.spring.ai2.UpgradeSpringAi_2_0"
+
+
+def test_third_party_suffix_added_for_any_step_kind_flagged_third_party():
+    """Exercises the suffix mechanism itself (not tied to which specific
+    catalog entry happens to be third-party today) using a patched catalog."""
+    from app.mvnrewrite.recipe_catalog import RecipeStep
+
+    class _PatchedCatalog(RecipeCatalog):
+        @property
+        def spring_ai_steps(self):
+            return [
+                RecipeStep(
+                    to_version="2.0", recipe="fake.Recipe", artifact="fake:artifact:RELEASE", confidence="verified", third_party=True
+                )
+            ]
+
+    detected = DetectedVersions(
+        java_version="21", spring_boot_version="2.7.18", spring_cloud_version=None, spring_ai_version="1.1.8"
+    )
+    plan = build_migration_plan(
+        detected, target_boot="4.1", target_java="21", target_ai="2.0", catalog=_PatchedCatalog(CATALOG._data)
+    )
+
+    ai_step = next(s for s in plan.steps if s.kind == "spring_ai")
+    assert ai_step.third_party is True
+    assert ai_step.description.endswith("(서드파티 레시피)")
 
 
 def test_no_spring_ai_step_when_project_does_not_use_spring_ai():

@@ -22,6 +22,12 @@ class RecipeStep:
     artifact: str | None
     confidence: str
     from_version: str | None = None
+    # True for a recipe that doesn't live under the official
+    # org.openrewrite.recipe:* group (e.g. spring_ai_steps' Arconia
+    # Migrations recipe) -- surfaced in the plan step description
+    # (orchestration/planning.py) so the screen/log make clear it isn't an
+    # OpenRewrite-official recipe.
+    third_party: bool = False
 
     @property
     def has_known_recipe(self) -> bool:
@@ -37,6 +43,7 @@ class RecipeStep:
             artifact=entry.get("artifact"),
             confidence=entry["confidence"],
             from_version=entry.get("from"),
+            third_party=entry.get("third_party", False),
         )
 
 

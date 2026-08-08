@@ -1,11 +1,15 @@
 # 단계적 마이그레이션 계획(스펙 "단계적 마이그레이션 계획")이 사용하는 정적 참조
 # 테이블. 목표: Spring Boot 4.1 / Spring Cloud 2025.1 / Java 21 / Spring AI 2.0.
 #
-# confidence: verified   -- 실제 OpenRewrite 공식 레시피로 확인된 이름/좌표.
-#             unverified -- Spring Boot 4.x/Spring AI 2.0 시점에는 아직 공식
-#                           릴리스가 없어, 기존 명명 규칙을 그대로 연장해 추정한
-#                           이름이다. 실제 rewrite-spring/rewrite-migrate-java
-#                           릴리스가 나오면 이 파일을 그 값으로 갱신해야 한다.
+# confidence: verified   -- 실제 존재/배포가 확인된 레시피 이름/좌표. 대부분
+#                           OpenRewrite 공식(org.openrewrite.recipe:*)이지만,
+#                           공식에 없는 경우 Maven Central에 공개 배포되고
+#                           라이선스가 이 도구의 "공개 Maven Central + RELEASE"
+#                           방식과 맞는(예: Apache 2.0) 서드파티 레시피도
+#                           확인 후 포함한다(예: spring_ai_steps의 Arconia).
+#             unverified -- 아직 공식 릴리스가 없어, 기존 명명 규칙을 그대로
+#                           연장해 추정한 이름이다. 실제 릴리스가 나오면 이
+#                           파일을 그 값으로 갱신해야 한다.
 # recipe: null인 항목은 "레시피 없음 -> AI가 직접 코드 수정"으로 처리한다
 #   (judgment call (i): 카탈로그 완성은 코딩 작업이 아니라 리서치 작업).
 
@@ -77,6 +81,26 @@ spring_cloud_trains:
 
 spring_ai_steps:
   - to: "2.0"
-    recipe: null # 공식 OpenRewrite 레시피 미확인 -- AI 직접 수정으로 처리
-    artifact: null
-    confidence: unverified
+    recipe: io.arconia.rewrite.spring.ai2.UpgradeSpringAi_2_0
+    artifact: io.arconia.migrations:rewrite-spring:RELEASE
+    third_party: true # 공식 org.openrewrite.recipe:* 밖 -- 화면/로그의 스텝 설명에
+      # "(서드파티 레시피)"로 표시된다(orchestration/planning.py). 아래 confidence
+      # 주석에 어느 프로젝트/라이선스인지 근거를 남겨뒀다.
+    confidence: verified # 2026-08-09 확인 (job #10 계기): 공식 org.openrewrite.recipe:rewrite-spring에는
+      # Spring AI 레시피가 없다. 대신 Arconia Migrations(arconia-io/arconia-migrations,
+      # Apache License 2.0)가 Spring AI 1.1.x -> 2.0.x 전체 마이그레이션 레시피를
+      # 제공한다 -- 이 카탈로그 최초의 비공식(org.openrewrite.recipe 밖) 서드파티
+      # 레시피 채택. 3중 확인: (1) GitHub 소스의 실제 레시피 YAML(rewrite-spring/
+      # src/main/resources/META-INF/rewrite/spring/ai2/spring-ai-2-0.yml) 내용 확인 --
+      # ChatOptions 빌더/툴콜링 리팩터링, ChatMemory advisor 이름 변경,
+      # ModelOptionsUtils -> JsonHelper, Anthropic 공식 SDK 전환 등 실제 breaking
+      # change를 폭넓게 커버하는 완전한 레시피. (2) Maven Central의
+      # maven-metadata.xml(repo1.maven.org/maven2/io/arconia/migrations/
+      # rewrite-spring/)로 배포 여부 + latest=release=1.1.0 확인. (3) 그 YAML이
+      # git 태그 v1.1.0(실제 릴리스, main 브랜치 전용 아님)에도 존재함을 확인.
+      # 호출 방식도 이 도구의 rewrite_client.py가 이미 쓰는
+      # recipeArtifactCoordinates + activeRecipes 그대로 맞아 코드 변경 불필요.
+      # (참고로 Spring AI 프로젝트 자체의 org.springframework.ai.migration.M3Migrate*
+      # 레시피도 있지만, 2.0.0-M3 마일스톤 대상이고 MCP 관련 변경만 다루는 부분
+      # 레시피이며 -Drewrite.configLocation=<GitHub raw YAML URL> 방식이라
+      # recipeArtifactCoordinates만 지원하는 지금 구조와 안 맞아 채택하지 않음.)
