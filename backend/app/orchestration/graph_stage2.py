@@ -17,6 +17,7 @@ in the outer loop (stage2_loop.py), not per-attempt here.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from langchain.agents import create_agent
@@ -30,6 +31,7 @@ from app.mvnrewrite.mvn_client import mvn_verify
 from app.mvnrewrite.subprocess_runner import build_log_path
 from app.orchestration.callbacks import LocalLLMLogger
 from app.orchestration.llm import get_chat_model
+from app.orchestration.progress import LogFn, noop_log
 from app.orchestration.state2 import Stage2State
 from app.orchestration.tools import build_tools
 from app.scan.merge import Vulnerability
@@ -42,17 +44,22 @@ _AI_PATCH_SYSTEM_PROMPT = (
 )
 
 
-def build_stage2_graph(settings: Settings):
+def build_stage2_graph(settings: Settings, on_log: LogFn = noop_log):
     async def apply_node(state: Stage2State) -> dict:
         if state["fix_version"] is None:
+            await on_log("  자동 수정 버전 없음, AI 직접 수정 필요")
             return {}  # no known fix version -- nothing mechanical to try, straight to verify (will fail) -> ai_fix
         work_dir = Path(state["work_dir"])
         output_dir = work_dir.parent / "output"  # sibling of work/ -- see ingest/workspace.py's WorkspacePaths
         group_id, artifact_id = state["package"].split(":", 1)
         log_path = build_log_path(output_dir, "stage2", f"dependency-patch-{state['cve_id']}")
+        started_at = time.monotonic()
         result = await patch_dependency_version(
             work_dir, group_id, artifact_id, state["fix_version"], settings, log_path=log_path
         )
+        elapsed = time.monotonic() - started_at
+        outcome = "완료" if result.returncode == 0 else "실패"
+        await on_log(f"  버전 패치 적용 {outcome}: {state['installed_version']} → {state['fix_version']} ({elapsed:.1f}s)")
         return {"last_build_output": f"[dependency patch exit={result.returncode}]\n{result.output}"}
 
     async def verify_node(state: Stage2State) -> dict:
@@ -60,6 +67,7 @@ def build_stage2_graph(settings: Settings):
         output_dir = work_dir.parent / "output"
         log_path = build_log_path(output_dir, "stage2", f"mvn-verify-{state['cve_id']}")
         result = await mvn_verify(work_dir, settings, log_path=log_path)
+        await on_log(f"  검증(mvn verify): {'통과' if result.returncode == 0 else '실패'}")
         if result.returncode == 0:
             return {"status": "success", "last_build_output": result.output}
         return {"last_build_output": result.output}
@@ -74,6 +82,7 @@ def build_stage2_graph(settings: Settings):
     async def ai_fix_node(state: Stage2State) -> dict:
         work_dir = Path(state["work_dir"])
         output_dir = work_dir.parent / "output"  # sibling of work/ -- see ingest/workspace.py's WorkspacePaths
+        await on_log(f"  AI 수정 시도 {state['attempt'] + 1}/{state['max_attempts']}")
         model = get_chat_model(settings)
         tools = build_tools(work_dir, settings, output_dir, stage="stage2")
         agent = create_agent(model, tools, system_prompt=_AI_PATCH_SYSTEM_PROMPT)
@@ -97,7 +106,9 @@ def build_stage2_graph(settings: Settings):
 
     async def route_after_ai_fix(state: Stage2State) -> str:
         work_dir = Path(state["work_dir"])
-        if changed_file_count(work_dir, settings) > state["max_auto_apply_files"]:
+        count = changed_file_count(work_dir, settings)
+        if count > state["max_auto_apply_files"]:
+            await on_log(f"  변경 파일 수({count}개)가 한도({state['max_auto_apply_files']}개)를 초과해 자동 적용 중단")
             return "handoff"
         return "verify"
 
@@ -139,8 +150,8 @@ def initial_state_for_vulnerability(
 
 
 async def run_stage2_vulnerability(
-    job_id: str, work_dir: Path, vuln: Vulnerability, settings: Settings
+    job_id: str, work_dir: Path, vuln: Vulnerability, settings: Settings, on_log: LogFn = noop_log
 ) -> Stage2State:
-    graph = build_stage2_graph(settings)
+    graph = build_stage2_graph(settings, on_log)
     state = initial_state_for_vulnerability(job_id, work_dir, vuln, settings)
     return await graph.ainvoke(state)

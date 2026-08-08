@@ -22,9 +22,9 @@
 |---|---|
 | `java -version` | 대상 프로젝트 빌드/검증(`mvn compile`/`test`/`verify`) 및 최종 목표(Java 21)용 JDK |
 | `mvn -version` | 대상 프로젝트의 Maven 빌드, OpenRewrite(`mvn rewrite:run`), Maven Versions Plugin 실행 |
+| `git --version` | Git URL 인입(`git clone`), `work/` 디렉토리의 체크포인트/롤백(`git init`/`commit`/`reset`) — ZIP으로 인입해도 항상 필요 |
 | `python --version` | 이 도구 자신(FastAPI 백엔드)의 실행 (3.11+) |
 | `trivy --version` | 2단계 취약점 스캔 |
-| `npm -v` | 대상 프로젝트에 `frontend-maven-plugin` 기반 프론트엔드 모듈이 있어 빌드/검증 시 필요할 수 있음 |
 
 각 항목이 없거나 버전이 안 맞으면, 스크립트가 설치 방법(공식 배포처 링크)을 함께 안내합니다.
 
@@ -59,6 +59,8 @@ uvicorn app.main:app --host 127.0.0.1 --port 8010
 
 `GET /health` — 정상 기동 확인. `GET /prereqs` — 위 사전 준비 상태를 API로도 확인 가능.
 
+**최초 실행 전에 NVD/Trivy 캐시를 한 번 갱신하세요.** 스캔(2단계)은 더 이상 DB를 암묵적으로 갱신하지 않습니다(사내망 프록시 환경에서 스캔 도중 예측 불가능하게 네트워크를 타는 것을 막기 위함, `docs/architecture.md` §8.4) — 캐시가 비어 있으면 스캔이 그냥 "취약점 없음"으로 조용히 끝납니다. 프론트엔드 설정(⚙) 모달의 "지금 갱신" 버튼을 누르거나, `POST /cache/refresh`를 직접 호출하세요.
+
 **Windows에서 `--reload`를 쓰면 안 됩니다.** uvicorn은 `--reload`(또는 `--workers`>1) 시 워커를 별도 프로세스로 띄우면서 이벤트 루프를 `SelectorEventLoop`로 강제 전환하는데(`use_subprocess=True` 분기), Windows의 `SelectorEventLoop`는 `asyncio` 서브프로세스(`create_subprocess_exec`)를 지원하지 않아 인자 없는 `NotImplementedError`를 던집니다. 이 앱은 `mvn`/OpenRewrite/Trivy를 전부 비동기 서브프로세스로 실행하므로, `--reload`를 쓰면 인입(ingest, git은 동기 호출이라 통과) 직후 첫 비동기 서브프로세스 호출(예: 출력 아티팩트 버전 설정 단계의 `mvn versions:set`)에서 **원인 메시지가 빈 문자열인 채로 작업이 `failed` 처리**됩니다. 코드를 고치면 화면에서 바로 반영되지 않으니, 수정 후에는 서버를 수동으로 재시작하세요.
 
 ## 5. 테스트
@@ -69,11 +71,13 @@ pytest -m slow                # + 실제 mvn/git/java 통합 테스트
 pytest -m external            # + 실제 네트워크/시크릿 필요한 테스트 (trivy DB, NVD, OpenAI, LangSmith)
 ```
 
-> **참고**: `-m external`을 처음 실행하면 OWASP Dependency-Check가 NVD 전체 데이터셋(수십만 건)을 `DEPENDENCY_CHECK_DATA_DIR`로 최초 동기화합니다. 실제로 돌려보니 수십 분 이상 걸릴 수 있습니다(네트워크 상황에 따라 다름). **이미 동기화된 캐시가 있다면 `DEPENDENCY_CHECK_DATA_DIR`(기본 `backend/data/nvd-cache/`)에 그대로 복사해 넣으세요** — 실제로 다른 프로젝트의 캐시(1일 전 것)를 복사해서 재사용해보니, 전체 재동기화 대신 증분 업데이트(수천 건)만 받고 2~3분 만에 끝났습니다. Trivy는 자체 취약점 DB를 훨씬 빠르게(약 10~20초) 받습니다.
+> **참고**: 스캔 자체는 더 이상 NVD/Trivy DB를 암묵적으로 갱신하지 않으므로(위 참고), `-m external`로 실제 스캔 결과를 검증하려면 그 전에 캐시를 갱신해둬야 합니다 — `POST /cache/refresh`를 먼저 호출하거나, 직접 `mvn org.owasp:dependency-check-maven:update-only -DdataDirectory=...`/`trivy fs --download-db-only`를 실행하세요. 캐시가 완전히 비어있는 상태에서 처음 갱신하면 OWASP Dependency-Check가 NVD 전체 데이터셋(수십만 건)을 `DEPENDENCY_CHECK_DATA_DIR`로 동기화하는데, 실제로 돌려보니 수십 분 이상 걸릴 수 있습니다(네트워크 상황에 따라 다름). **이미 동기화된 캐시가 있다면 `DEPENDENCY_CHECK_DATA_DIR`(기본 `backend/data/nvd-cache/`)에 그대로 복사해 넣으세요** — 실제로 다른 프로젝트의 캐시(1일 전 것)를 복사해서 재사용해보니, 전체 재동기화 대신 증분 업데이트(수천 건)만 받고 2~3분 만에 끝났습니다. Trivy는 자체 취약점 DB를 훨씬 빠르게(약 10~20초) 받습니다.
 
 ## 6. 참고: 대상 프로젝트가 사내 전용 저장소를 참조하는 경우
 
-대상 프로젝트의 `pom.xml`이 사내 전용 Nexus 등 외부에서 접근 불가능한 `<repository>`를 선언하고 있어도, 그 저장소에만 있는 의존성이 아니라면 빌드는 대체로 정상 진행됩니다 — Maven은 각 의존성마다 설정된 저장소를 순서대로 시도하고, 그중 하나(대개 Maven Central)에서 해결되면 나머지 저장소의 실패는 경고로만 남기기 때문입니다. 다만 그 사내 저장소에만 있는 사내 전용 라이브러리(사내 SSO 클라이언트 등)에 의존하는 프로젝트라면, 해당 저장소에 실제로 접근 가능한 네트워크(VPN 등)에서 실행해야 합니다.
+대상 프로젝트의 `pom.xml`이 사내 Nexus 등 외부에서 접근 불가능한 `<repository>`를 선언하고 있으면, 그 저장소에 등록된 아티팩트가 실제로는 공개된 3rd-party 라이브러리(예: Azure SDK)라 해도 **Maven이 자동으로 Maven Central 등 다른 저장소로 넘어가 주지 않을 수 있습니다** — 실제로 `com.azure:azure-json`처럼 순수 공개 아티팩트가, 사내 Nexus 호스트가 DNS로 해석되지 않는 것만으로 빌드 전체를 깨뜨리는 것을 확인했습니다(단순 404가 아니라 호스트 자체에 접근 불가능한 경우, Maven이 다른 저장소를 추가로 시도하지 않는 것으로 보임).
+
+사외(VPN 미접속) 환경에서 이 도구를 실행할 때는 `.env`의 `MVN_PUBLIC_MIRROR_ENABLED=true`로 켜세요 — 모든 저장소 조회를 `MVN_PUBLIC_MIRROR_URL`(기본 Maven Central)로 리다이렉트하는 `settings.xml`을 만들어 모든 `mvn` 호출에 `-s`로 넘깁니다(`mvnrewrite/mvn_settings.py`). 대상 프로젝트의 `pom.xml`은 건드리지 않습니다. 사내 Nexus에만 있는 진짜 사내 전용 라이브러리(사내 SSO 클라이언트 등)에 의존하는 프로젝트라면 이 옵션으로도 해결되지 않으므로, 그 경우엔 옵션을 꺼두고 해당 저장소에 실제로 접근 가능한 네트워크(VPN 등)에서 실행해야 합니다.
 
 OpenRewrite 실행(`rewrite_client.py`) 시 `rewrite-maven-plugin`과 레시피 아티팩트(`recipe_catalog.yaml`의 `artifact` 필드) 버전은 **반드시 서로 맞물려야 합니다** — 실제로 플러그인만 오래된 버전으로 고정하고 레시피 쪽만 `RELEASE`로 흘러가게 뒀더니 `IncompatibleClassChangeError`로 즉시 깨지는 것을 확인했습니다. 지금은 둘 다 `RELEASE`로 맞춰 함께 흘러가게 해뒀습니다.
 

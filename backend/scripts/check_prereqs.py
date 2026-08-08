@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Standalone prereq checker -- runnable before ``pip install`` since it only
 touches stdlib + app/prereqs.py (which itself has zero third-party deps).
-Prints a pass/fail table for: java, mvn, python, trivy, npm.
+Prints a pass/fail table for: java, mvn, git, python, trivy.
 """
 
 from __future__ import annotations

@@ -162,6 +162,55 @@ def test_get_unknown_job_returns_404(app_client):
     assert resp.status_code == 404
 
 
+def test_proceed_unknown_job_returns_404(app_client):
+    resp = app_client.post("/jobs/does-not-exist/proceed")
+    assert resp.status_code == 404
+
+
+def test_proceed_job_not_awaiting_approval_returns_409(app_client):
+    zip_content = _zip_bytes({"pom.xml": _POM})
+    create_resp = app_client.post(
+        "/jobs",
+        data={"run_stage1": "false", "run_stage2": "false"},
+        files={"zip_file": ("project.zip", zip_content, "application/zip")},
+    )
+    job_id = create_resp.json()["job_id"]
+    _wait_for_terminal_status(app_client, job_id)  # ends "success", never "awaiting_approval"
+
+    resp = app_client.post(f"/jobs/{job_id}/proceed")
+    assert resp.status_code == 409
+
+
+def test_list_jobs_returns_empty_list_when_no_jobs(app_client):
+    resp = app_client.get("/jobs")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_list_jobs_returns_newest_first(app_client):
+    zip_content = _zip_bytes({"pom.xml": _POM})
+
+    first = app_client.post(
+        "/jobs",
+        data={"run_stage1": "false", "run_stage2": "false"},
+        files={"zip_file": ("project.zip", zip_content, "application/zip")},
+    ).json()
+    second = app_client.post(
+        "/jobs",
+        data={"run_stage1": "false", "run_stage2": "false"},
+        files={"zip_file": ("project.zip", zip_content, "application/zip")},
+    ).json()
+
+    resp = app_client.get("/jobs")
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert [j["job_id"] for j in body] == [second["job_id"], first["job_id"]]
+    assert body[0]["source_type"] == "zip"
+    assert body[0]["run_stage1"] is False
+    assert body[0]["run_stage2"] is False
+
+
 def test_sse_events_stream_includes_status_transitions(app_client):
     zip_content = _zip_bytes({"pom.xml": _POM})
     create_resp = app_client.post(

@@ -30,16 +30,20 @@ def test_java_step_comes_first():
 
 
 def test_no_java_step_when_already_at_or_above_target():
-    plan = _plan(java_version="21")
+    plan = _plan(java_version="21", spring_boot_version="4.1.0")
     assert all(step.kind != "java" for step in plan.steps)
-    assert plan.skipped == []
 
 
-def test_spring_boot_hops_are_sequential_not_skipped():
+def test_spring_boot_hops_are_sequential_then_ai_bridges_the_final_gap():
     plan = _plan()
     boot_steps = [s for s in plan.steps if s.kind == "spring_boot"]
     versions = [s.target_version for s in boot_steps]
+    # 4.0 -> 4.1은 카탈로그에 알려진 레시피가 없어(recipe_catalog.yaml 주석
+    # 참고) 마지막 홉은 recipe=None인 "AI 직접 시도" 스텝으로 채워진다.
     assert versions == ["3.0", "3.2", "3.4", "3.5", "4.0", "4.1"]
+    last = boot_steps[-1]
+    assert last.recipe is None
+    assert "AI 직접 시도" in last.description
 
 
 def test_no_spring_boot_steps_when_already_at_target():
@@ -47,10 +51,12 @@ def test_no_spring_boot_steps_when_already_at_target():
     assert all(step.kind != "spring_boot" for step in plan.steps)
 
 
-def test_stops_at_catalog_gap_for_unknown_origin_and_records_it_as_skipped():
+def test_unknown_origin_gets_a_single_ai_bridge_step_to_target():
     plan = _plan(spring_boot_version="1.5.0")  # not a known catalog origin
-    assert all(step.kind != "spring_boot" for step in plan.steps)
-    assert any("Spring Boot" in note for note in plan.skipped)
+    boot_steps = [s for s in plan.steps if s.kind == "spring_boot"]
+    assert len(boot_steps) == 1
+    assert boot_steps[0].recipe is None
+    assert boot_steps[0].target_version == "4.1"
 
 
 def test_spring_cloud_bundled_onto_matching_boot_step_not_separate():
@@ -58,6 +64,8 @@ def test_spring_cloud_bundled_onto_matching_boot_step_not_separate():
     kinds = [s.kind for s in plan.steps]
     assert "spring_cloud" not in kinds  # never its own step
 
+    # The AI-bridge step (4.0 -> 4.1) still carries the matching Cloud train
+    # for its target version, same as any other boot step.
     boot_41_step = next(s for s in plan.steps if s.kind == "spring_boot" and s.target_version == "4.1")
     assert boot_41_step.spring_cloud_train == "2025.1"
 
@@ -71,13 +79,15 @@ def test_no_spring_cloud_train_attached_when_project_does_not_use_cloud():
     assert all(s.spring_cloud_train is None for s in plan.steps if s.kind == "spring_boot")
 
 
-def test_spring_ai_with_no_known_recipe_is_skipped_not_silently_dropped():
+def test_spring_ai_with_no_known_recipe_still_gets_an_ai_bridge_step():
     """The catalog currently has no known OpenRewrite recipe for Spring AI
-    2.0 (confidence=unverified, recipe=null) -- the planner must surface
-    that as a skipped/manual-work note, not just omit it with no trace."""
+    2.0 (confidence=unverified, recipe=null) -- the planner must still add a
+    step for it (recipe=None), not omit it with no trace."""
     plan = _plan(spring_ai_version="1.1.8")
-    assert all(step.kind != "spring_ai" for step in plan.steps)
-    assert any("Spring AI" in note for note in plan.skipped)
+    ai_steps = [s for s in plan.steps if s.kind == "spring_ai"]
+    assert len(ai_steps) == 1
+    assert ai_steps[0].recipe is None
+    assert "AI 직접 시도" in ai_steps[0].description
 
 
 def test_spring_ai_step_would_be_inserted_right_after_first_4x_boot_step_if_a_recipe_existed():
@@ -107,16 +117,13 @@ def test_spring_ai_step_would_be_inserted_right_after_first_4x_boot_step_if_a_re
 def test_no_spring_ai_step_when_project_does_not_use_spring_ai():
     plan = _plan(spring_ai_version=None)
     assert all(step.kind != "spring_ai" for step in plan.steps)
-    assert not any("Spring AI" in note for note in plan.skipped)
 
 
 def test_already_fully_at_target_produces_empty_plan():
     plan = _plan(java_version="21", spring_boot_version="4.1.0")
     assert plan.steps == []
-    assert plan.skipped == []
 
 
 def test_project_with_no_detected_versions_produces_empty_plan():
     plan = _plan(java_version=None, spring_boot_version=None)
     assert plan.steps == []
-    assert plan.skipped == []

@@ -32,6 +32,32 @@ async def run_trivy_scan(
         str(output_path),
         "--cache-dir",
         str(settings.trivy_cache_path),
+        # DB updates happen only via the explicit cache-refresh flow
+        # (orchestration/cache_refresh.run_cache_refresh) -- a scan run
+        # never silently hits the network, which matters behind a
+        # corporate proxy where an unexpected update mid-scan can hang
+        # or fail unpredictably.
+        "--skip-db-update",
+        "--skip-java-db-update",
         str(work_dir),
     ]
     return await run_subprocess(args, work_dir, settings, log_path=log_path, on_line=on_line)
+
+
+async def run_trivy_db_refresh(
+    settings: Settings,
+    log_path: Path | None = None,
+    on_line: Callable[[str], None] | None = None,
+) -> list[SubprocessResult]:
+    """Refreshes the Trivy vulnerability DB and Java index DB, independent of
+    any scan target. `--download-db-only`/`--download-java-db-only` can't be
+    passed together in one invocation (confirmed empirically: trivy rejects
+    the combination), so this runs them as two sequential calls."""
+    settings.trivy_cache_path.mkdir(parents=True, exist_ok=True)
+    settings.jobs_dir.mkdir(parents=True, exist_ok=True)  # used only as a neutral cwd, no scan target needed
+    cache_dir = str(settings.trivy_cache_path)
+    results = []
+    for flag in ("--download-db-only", "--download-java-db-only"):
+        args = ["trivy", "fs", "--cache-dir", cache_dir, flag]
+        results.append(await run_subprocess(args, settings.jobs_dir, settings, log_path=log_path, on_line=on_line))
+    return results

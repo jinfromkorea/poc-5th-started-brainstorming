@@ -12,5 +12,5 @@ def test_prereqs_reports_all_five_checks(client):
     assert resp.status_code == 200
     body = resp.json()
     names = {c["name"] for c in body["checks"]}
-    assert names == {"Java", "Maven", "Python", "Trivy", "npm"}
+    assert names == {"Java", "Maven", "Git", "Python", "Trivy"}
     assert isinstance(body["ok"], bool)

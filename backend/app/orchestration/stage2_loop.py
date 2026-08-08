@@ -15,6 +15,7 @@ from app.checkpoint.git_repo import commit_checkpoint, diff_since, reset_to_chec
 from app.config import Settings
 from app.handoff.guide_builder import build_handoff_guide
 from app.orchestration.graph_stage2 import run_stage2_vulnerability
+from app.orchestration.progress import LogFn, noop_log
 from app.scan.merge import Vulnerability
 
 TARGET_STACK_SUMMARY = "Java 21 / Spring Boot 4.1 / Spring Cloud 2025.1 / Spring AI 2.0"
@@ -42,16 +43,20 @@ async def run_stage2_patches(
     vulnerabilities: list[Vulnerability],
     baseline_commit: str,
     settings: Settings,
+    on_log: LogFn = noop_log,
 ) -> Stage2RunResult:
     outcomes: list[VulnOutcome] = []
     last_good_sha = baseline_commit
+    total = len(vulnerabilities)
 
-    for vuln in vulnerabilities:
-        result_state = await run_stage2_vulnerability(job_id, work_dir, vuln, settings)
+    for idx, vuln in enumerate(vulnerabilities, 1):
+        await on_log(f"[{idx}/{total}] {vuln.cve_id} ({vuln.package}, CVSS {vuln.cvss}) 패치 시도")
+        result_state = await run_stage2_vulnerability(job_id, work_dir, vuln, settings, on_log=on_log)
 
         if result_state["status"] == "success":
             last_good_sha = commit_checkpoint(work_dir, settings, f"checkpoint: patch {vuln.cve_id} ({vuln.package})")
             outcomes.append(VulnOutcome(vulnerability=vuln, status="success"))
+            await on_log(f"[{idx}/{total}] 완료, 체크포인트 저장")
             continue
 
         reset_to_checkpoint(work_dir, settings, last_good_sha)
@@ -63,6 +68,7 @@ async def run_stage2_patches(
             target_summary=TARGET_STACK_SUMMARY,
         )
         outcomes.append(VulnOutcome(vulnerability=vuln, status="needs_handoff", handoff_guide=guide))
+        await on_log(f"[{idx}/{total}] 막힘 — AI 인수인계 가이드 생성됨")
         # deliberately no `break` here -- CVE patches are independent, keep going
 
     final_diff = diff_since(work_dir, settings, baseline_commit)

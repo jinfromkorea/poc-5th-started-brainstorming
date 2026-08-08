@@ -19,7 +19,7 @@ from app.ingest.workspace import GitSourceSpec, ZipSourceSpec
 from app.models.db import get_db_session, session_factory
 from app.models.job import Job, next_job_id
 from app.orchestration.concurrency import get_job_manager
-from app.orchestration.pipeline import run_pipeline
+from app.orchestration.pipeline import run_pipeline, run_pipeline_resume_stage2
 from app.schemas.job import JobCreateResponse, JobStatusResponse
 from app.streaming.sse import stream_job_events
 
@@ -78,6 +78,29 @@ async def create_job(
     return JobCreateResponse(job_id=job_id, status="queued")
 
 
+@router.get("", response_model=list[JobStatusResponse])
+async def list_jobs(db=Depends(get_db_session)) -> list[JobStatusResponse]:
+    # cache_refresh rows (api/routers/cache.py) are a utility action, not a
+    # migration job -- they don't belong in the job-history view.
+    jobs = db.query(Job).filter(Job.source_type != "cache_refresh").order_by(Job.created_at.desc()).all()
+    return [
+        JobStatusResponse(
+            job_id=job.id,
+            status=job.status,
+            source_type=job.source_type,
+            source_ref=job.source_ref,
+            run_stage1=job.run_stage1,
+            run_stage2=job.run_stage2,
+            output_version=job.output_version,
+            error_message=job.error_message,
+            report_markdown=job.report_markdown,
+            created_at=job.created_at,
+            updated_at=job.updated_at,
+        )
+        for job in jobs
+    ]
+
+
 @router.get("/{job_id}", response_model=JobStatusResponse)
 async def get_job(job_id: str, db=Depends(get_db_session)) -> JobStatusResponse:
     job = db.get(Job, job_id)
@@ -96,6 +119,28 @@ async def get_job(job_id: str, db=Depends(get_db_session)) -> JobStatusResponse:
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
+
+
+@router.post("/{job_id}/proceed", response_model=JobCreateResponse)
+async def proceed_job(
+    job_id: str,
+    settings: Settings = Depends(get_settings),
+    db=Depends(get_db_session),
+) -> JobCreateResponse:
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"unknown job_id: {job_id}")
+    if job.status != "awaiting_approval":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"job {job_id} is not awaiting approval (status={job.status})",
+        )
+
+    factory = session_factory(settings)
+    manager = get_job_manager(settings.max_concurrent_repos)
+    manager.start(job_id, lambda: run_pipeline_resume_stage2(job_id, settings, factory))
+
+    return JobCreateResponse(job_id=job_id, status="running")
 
 
 @router.get("/{job_id}/events")

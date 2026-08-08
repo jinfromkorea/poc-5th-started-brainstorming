@@ -34,12 +34,24 @@ spring_boot_steps:
     to: "4.0"
     recipe: org.openrewrite.java.spring.boot4.UpgradeSpringBoot_4_0
     artifact: org.openrewrite.recipe:rewrite-spring:RELEASE
-    confidence: unverified
-  - from: "4.0"
-    to: "4.1"
-    recipe: org.openrewrite.java.spring.boot4.UpgradeSpringBoot_4_1
-    artifact: org.openrewrite.recipe:rewrite-spring:RELEASE
-    confidence: unverified
+    confidence: verified # 2026-08-07 확인: rewrite-spring Community Edition에 실존, 3.5를 시작 조건으로 명시
+      # (Spring Framework 7.0/Security 7.0/Cloud 2025.1/Batch 6.0까지 함께 처리).
+      # https://docs.openrewrite.org/recipes/java/spring/boot4/upgradespringboot_4_0-community-edition
+  # 4.0 -> 4.1은 의도적으로 항목이 없다 (2026-08-07 실측 + 웹 조사로 확인):
+  # org.openrewrite.java.spring.boot4.UpgradeSpringBoot_4_1은 존재하지 않는다
+  # (실제 job #7에서 `mvn rewrite:run`이 "Recipe(s) not found... Did you mean:
+  # ...UpgradeSpringBoot_4_0"으로 실패). 완전한 버전은
+  # io.moderne.java.spring.boot4.UpgradeSpringBoot_4_1로 존재하지만 Moderne
+  # 유료 구독 전용(io.moderne.recipe:rewrite-spring, Moderne Proprietary
+  # License) -- 지금 이 도구가 쓰는 "공개 Maven Central + RELEASE" 방식과
+  # 안 맞는다. 무료 쪽엔 org.openrewrite.java.spring.boot4.SpringBootProperties_4_1
+  # (org.openrewrite.recipe:rewrite-spring:6.36.1)가 있지만 이건 프로퍼티 키
+  # 이름만 바꿔줄 뿐 Spring Boot 버전 자체는 안 올리고, 이마저도 Moderne
+  # Source Available License라 사전 컴파일 아티팩트는 Moderne 고객 전용이다.
+  # 항목을 비워두면 build_migration_plan(planning.py)이 4.0 -> 4.1을 AI가
+  # 레시피 없이 직접 시도하는 스텝으로 계획에 넣는다(graph_stage1.py) --
+  # 그것도 실패하면 needs_handoff로 인수인계 가이드를 만든다
+  # (docs/architecture.md §7 참고).
 
 java_steps:
   - to: "17"

@@ -45,6 +45,7 @@ async def test_retries_until_build_succeeds(monkeypatch, settings, tmp_path):
     monkeypatch.setattr("app.orchestration.graph_stage1.mvn_compile", fake_mvn_compile)
     monkeypatch.setattr("app.orchestration.graph_stage1.run_openrewrite_recipes", fake_run_openrewrite_recipes)
     monkeypatch.setattr("app.orchestration.graph_stage1.changed_file_count", lambda work_dir, settings_: 1)
+    monkeypatch.setattr("app.orchestration.graph_stage1.commit_checkpoint", lambda *a, **k: "deadbeef")
     monkeypatch.setattr("app.orchestration.graph_stage1.create_agent", lambda *a, **k: _fake_agent())
 
     result = await run_stage1_single_step(
@@ -70,6 +71,7 @@ async def test_exhausts_retries_and_needs_handoff(monkeypatch, settings, tmp_pat
     monkeypatch.setattr("app.orchestration.graph_stage1.mvn_compile", always_fails)
     monkeypatch.setattr("app.orchestration.graph_stage1.run_openrewrite_recipes", fake_run_openrewrite_recipes)
     monkeypatch.setattr("app.orchestration.graph_stage1.changed_file_count", lambda work_dir, settings_: 1)
+    monkeypatch.setattr("app.orchestration.graph_stage1.commit_checkpoint", lambda *a, **k: "deadbeef")
     monkeypatch.setattr("app.orchestration.graph_stage1.create_agent", lambda *a, **k: _fake_agent())
 
     result = await run_stage1_single_step(
@@ -103,6 +105,7 @@ async def test_auto_apply_file_count_gate_short_circuits_to_handoff(monkeypatch,
     monkeypatch.setattr("app.orchestration.graph_stage1.mvn_compile", counting_mvn_compile)
     monkeypatch.setattr("app.orchestration.graph_stage1.run_openrewrite_recipes", fake_run_openrewrite_recipes)
     monkeypatch.setattr("app.orchestration.graph_stage1.changed_file_count", lambda work_dir, settings_: 999)
+    monkeypatch.setattr("app.orchestration.graph_stage1.commit_checkpoint", lambda *a, **k: "deadbeef")
     monkeypatch.setattr("app.orchestration.graph_stage1.create_agent", lambda *a, **k: _fake_agent())
 
     result = await run_stage1_single_step(

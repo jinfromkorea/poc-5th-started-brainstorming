@@ -30,12 +30,6 @@ def build_report(plan: MigrationPlan, outcomes: list[StepOutcome], handoff_guide
             mark = "완료" if outcome.status == "success" else "중단"
             lines.append(f"- [{mark}] {outcome.step.description}")
 
-    if plan.skipped:
-        lines.append("")
-        lines.append("## 자동 계획에서 제외된 항목 (알려진 레시피 없음, 수동 처리 필요)")
-        for note in plan.skipped:
-            lines.append(f"- {note}")
-
     if handoff_guide_path is not None:
         lines.append("")
         lines.append("## 막힌 지점")

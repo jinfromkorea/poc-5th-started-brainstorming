@@ -49,7 +49,8 @@
       "Bash(.venv312/Scripts/python.exe -m pytest tests/unit/test_pipeline.py tests/unit/test_streaming.py tests/integration/test_jobs_api.py tests/integration/test_artifacts_api.py -q --basetemp=\"/c/Users/jinia/AppData/Local/Temp/claude/c--workspace-poc-5th-started-brainstorming/a6d5a07b-05da-4f93-814a-0b3ba95e984e/scratchpad/pytest_tmp\")",
       "Bash(.venv312/Scripts/python.exe -m pytest -q --basetemp=\"/c/Users/jinia/AppData/Local/Temp/claude/c--workspace-poc-5th-started-brainstorming/a6d5a07b-05da-4f93-814a-0b3ba95e984e/scratchpad/pytest_tmp2\")",
       "Bash(mkdir -p /c/pytesttmp)",
-      "Bash(.venv312/Scripts/python.exe -m pytest -q --basetemp=\"/c/pytesttmp\")"
+      "Bash(.venv312/Scripts/python.exe -m pytest -q --basetemp=\"/c/pytesttmp\")",
+      "Read(//c/c/Users/jinia/AppData/Local/Temp/claude/c--workspace-poc-5th-started-brainstorming/a56a97e9-668e-4d07-85a5-5faacac0fd8c/scratchpad/**)"
     ],
     "additionalDirectories": [
       "C:\\workspace\\poc-5th\\backend"

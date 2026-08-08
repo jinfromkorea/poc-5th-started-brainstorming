@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>작업 이력 - Maven Stack Upgrade Tool</title>
+  <link rel="stylesheet" href="assets/app.css" />
+</head>
+<body>
+  <header>
+    <h1>Maven Stack Upgrade Tool</h1>
+    <p class="subtitle">지난 마이그레이션 작업 목록</p>
+    <nav class="page-nav"><a href="index.html">새 작업</a></nav>
+  </header>
+
+  <main>
+    <section id="jobs-panel" class="card">
+      <h2>작업 목록</h2>
+      <button type="button" id="refresh-jobs-btn" class="secondary">새로고침</button>
+      <p id="jobs-error" class="error hidden"></p>
+      <div class="table-scroll">
+        <table id="jobs-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>상태</th>
+              <th>소스</th>
+              <th>출력 버전</th>
+              <th>1단계</th>
+              <th>2단계</th>
+              <th>생성 시각</th>
+              <th>수정 시각</th>
+            </tr>
+          </thead>
+          <tbody id="jobs-table-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="assets/common.js"></script>
+  <script src="assets/history.js"></script>
+</body>
+</html>

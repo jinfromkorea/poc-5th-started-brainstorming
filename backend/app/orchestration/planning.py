@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from app.mvnrewrite.pom_parser import DetectedVersions
-from app.mvnrewrite.recipe_catalog import RecipeCatalog
+from app.mvnrewrite.recipe_catalog import RecipeCatalog, RecipeStep
 
 StepKind = Literal["java", "spring_boot", "spring_ai"]
 
@@ -40,11 +40,6 @@ class PlanStep:
 @dataclass
 class MigrationPlan:
     steps: list[PlanStep]
-    # Human-readable notes about gaps that were deliberately left OUT of
-    # `steps` -- e.g. a dimension with a real gap but no cataloged recipe.
-    # These must stay visible (report_builder surfaces them), not vanish
-    # silently just because there's nothing automatic to run for them yet.
-    skipped: list[str]
 
 
 def _major_minor(version: str) -> str:
@@ -67,7 +62,6 @@ def build_migration_plan(
 ) -> MigrationPlan:
     catalog = catalog or RecipeCatalog.load()
     steps: list[PlanStep] = []
-    skipped: list[str] = []
 
     # 1. Java, first, if behind target.
     if detected.java_version is not None and _java_major(detected.java_version) < _java_major(target_java):
@@ -83,18 +77,31 @@ def build_migration_plan(
                 )
             )
         else:
-            skipped.append(f"Java {detected.java_version} -> {target_java}: 카탈로그에 알려진 레시피 없음, 수동 처리 필요")
+            # No cataloged recipe -- still a real step, just one with no
+            # mechanical shortcut. graph_stage1 has an AI attempt it directly
+            # instead of leaving it out of the plan entirely.
+            steps.append(
+                PlanStep(
+                    kind="java",
+                    description=f"Java {detected.java_version} -> {target_java} (AI 직접 시도, 알려진 레시피 없음)",
+                    recipe=None,
+                    artifact=None,
+                    target_version=target_java,
+                )
+            )
 
     # 2. Spring Boot, one cataloged hop at a time, with Cloud/AI bundled in.
-    boot_hops = []
+    boot_hops: list[RecipeStep] = []
     current = _major_minor(detected.spring_boot_version) if detected.spring_boot_version else None
     while current is not None and current != target_boot:
         hop = catalog.spring_boot_step_from(current)
         if hop is None or hop.recipe is None:
-            skipped.append(
-                f"Spring Boot {current} -> {target_boot}: {current}부터는 카탈로그에 알려진 레시피 없음, 수동 처리 필요"
-            )
-            break  # plan stops here -- the rest needs a human/AI without a recipe to lean on
+            # Catalog runs out here -- bridge the rest of the way to
+            # target_boot in one AI-driven step rather than stopping the
+            # plan. There's no way to know what intermediate hops the AI
+            # will land on, so this is necessarily the last boot hop.
+            boot_hops.append(RecipeStep(to_version=target_boot, recipe=None, artifact=None, confidence="none", from_version=current))
+            break
         boot_hops.append(hop)
         current = hop.to_version
 
@@ -103,10 +110,11 @@ def build_migration_plan(
         cloud_train = (
             catalog.spring_cloud_train_for_boot(hop.to_version) if detected.spring_cloud_version is not None else None
         )
+        gap_suffix = f" (AI 직접 시도, {hop.from_version}부터 카탈로그에 알려진 레시피 없음)" if hop.recipe is None else ""
         steps.append(
             PlanStep(
                 kind="spring_boot",
-                description=f"Spring Boot {hop.from_version} -> {hop.to_version}",
+                description=f"Spring Boot {hop.from_version} -> {hop.to_version}{gap_suffix}",
                 recipe=hop.recipe,
                 artifact=hop.artifact,
                 target_version=hop.to_version,
@@ -128,8 +136,14 @@ def build_migration_plan(
                     )
                 )
             else:
-                skipped.append(
-                    f"Spring AI {detected.spring_ai_version} -> {target_ai}: 카탈로그에 알려진 레시피 없음, 수동 처리 필요"
+                steps.append(
+                    PlanStep(
+                        kind="spring_ai",
+                        description=f"Spring AI {detected.spring_ai_version} -> {target_ai} (AI 직접 시도, 알려진 레시피 없음)",
+                        recipe=None,
+                        artifact=None,
+                        target_version=target_ai,
+                    )
                 )
 
-    return MigrationPlan(steps=steps, skipped=skipped)
+    return MigrationPlan(steps=steps)

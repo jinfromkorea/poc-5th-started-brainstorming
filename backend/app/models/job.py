@@ -17,7 +17,13 @@ from app.models.db import Base
 # Deliberately plain strings, not a DB-level enum -- SQLite has no native
 # enum type and this avoids an Alembic-less migration headache if a status
 # value is ever added later.
-JOB_STATUSES = ("queued", "running", "success", "needs_handoff", "failed")
+#
+# "awaiting_approval": Stage 1 ended needs_handoff and Stage 2 was requested
+# -- the pipeline stops instead of auto-continuing into Stage 2, until a
+# human calls POST /jobs/{id}/proceed. Deliberately NOT terminal (see below)
+# -- a client with an open SSE connection just keeps waiting and picks up
+# Stage 2's events live once approved, no reconnect needed.
+JOB_STATUSES = ("queued", "running", "awaiting_approval", "success", "needs_handoff", "failed")
 TERMINAL_JOB_STATUSES = frozenset({"success", "needs_handoff", "failed"})
 
 
@@ -25,7 +31,7 @@ class Job(Base):
     __tablename__ = "jobs"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    source_type: Mapped[str] = mapped_column(String)  # "git" | "zip"
+    source_type: Mapped[str] = mapped_column(String)  # "git" | "zip" | "cache_refresh" (api/routers/cache.py)
     source_ref: Mapped[str] = mapped_column(String)  # git URL, or original upload filename
     output_version: Mapped[str | None] = mapped_column(String, nullable=True)
     run_stage1: Mapped[bool] = mapped_column(default=True)

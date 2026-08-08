@@ -12,13 +12,14 @@ git checkpoint/rollback between steps + the AI handoff guide.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from langgraph.graph import END, START, StateGraph
 
-from app.checkpoint.git_repo import changed_file_count
+from app.checkpoint.git_repo import changed_file_count, commit_checkpoint
 from app.config import Settings
 from app.mvnrewrite.mvn_client import mvn_compile
 from app.mvnrewrite.recipe_catalog import RecipeCatalog, RecipeStep
@@ -27,14 +28,17 @@ from app.mvnrewrite.subprocess_runner import build_log_path
 from app.orchestration.callbacks import LocalLLMLogger
 from app.orchestration.llm import get_chat_model
 from app.orchestration.planning import PlanStep
+from app.orchestration.progress import LogFn, noop_log
 from app.orchestration.state import Stage1State
 from app.orchestration.tools import build_tools
 
 _AI_FIX_SYSTEM_PROMPT = (
-    "You are fixing a Maven/Java build that failed after an OpenRewrite migration recipe was applied. "
-    "Use the tools to inspect the failing build output, read the relevant source files, and edit them to "
-    "fix the compile error, then re-run the build to confirm. Make the smallest change that fixes the "
-    "error -- don't refactor unrelated code."
+    "You are performing one step of a Maven/Java stack migration. Sometimes this means directly bumping a "
+    "dependency/version and fixing whatever breaks, because no automated recipe exists for this step; other "
+    "times it means fixing a build that failed after an OpenRewrite migration recipe already ran. Use the "
+    "tools to inspect the current state and any failing build output, read the relevant source files, and "
+    "edit them to reach a compiling build, then re-run the build to confirm. Make the smallest change that "
+    "achieves the target -- don't refactor unrelated code."
 )
 
 
@@ -57,12 +61,13 @@ def plan_next_step(detected_boot: str | None, target_boot: str, catalog: RecipeC
     return catalog.spring_boot_step_from(current_mm)
 
 
-def build_stage1_graph(settings: Settings):
+def build_stage1_graph(settings: Settings, on_log: LogFn = noop_log):
     async def plan_node(state: Stage1State) -> dict:
-        if state.get("recipe") is not None:
+        if state.get("plan_precomputed"):
             # A step was already supplied by an outer multi-step planner
             # (Phase 4's planning.build_migration_plan) -- nothing to
-            # compute, just proceed to apply it.
+            # compute, just proceed with recipe/artifact as given (which may
+            # themselves be None, for a step with no known recipe).
             return {}
 
         catalog = RecipeCatalog.load()
@@ -74,21 +79,41 @@ def build_stage1_graph(settings: Settings):
 
         step = plan_next_step(detected, target, catalog)
         if step is None or step.recipe is None:
-            # a real gap exists but the catalog has no known mechanical
-            # recipe for this origin -- Phase 3 doesn't attempt an
-            # unguided AI fix from nothing, that's Phase 4/5 territory.
-            return {"status": "needs_handoff"}
+            # A real gap exists but the catalog has no known mechanical
+            # recipe for this origin -- recipe/artifact stay None, and
+            # route_after_plan sends this straight to ai_fix instead of
+            # apply, so the AI attempts the version bump directly. That
+            # naturally touches more files than a one-error compile fix, so
+            # it gets the more generous no-recipe file-count ceiling.
+            return {
+                "recipe": None,
+                "artifact": None,
+                "max_auto_apply_files": settings.compile_fix_auto_apply_max_files_no_recipe,
+            }
         return {"recipe": step.recipe, "artifact": step.artifact}
 
     def route_after_plan(state: Stage1State) -> str:
-        return END if state.get("status") in ("success", "needs_handoff") else "apply"
+        if state.get("status") == "success":
+            return END
+        return "ai_fix" if state.get("recipe") is None else "apply"
 
     async def apply_node(state: Stage1State) -> dict:
         work_dir = Path(state["work_dir"])
         output_dir = work_dir.parent / "output"  # sibling of work/ -- see ingest/workspace.py's WorkspacePaths
         recipe_label = (state["recipe"] or "recipe").rsplit(".", 1)[-1]
         log_path = build_log_path(output_dir, "stage1", f"openrewrite-{recipe_label}")
+        started_at = time.monotonic()
         result = await run_openrewrite_recipes(work_dir, [state["recipe"]], [state["artifact"]], settings, log_path=log_path)
+        elapsed = time.monotonic() - started_at
+        # Committed immediately, independent of whether verify/AI-fix later
+        # succeeds -- the recipe's own changes are the tool-driven, lower-risk
+        # part of a step and shouldn't be discarded just because a later
+        # compile error (or an unrelated AI-fix failure) sends the step to
+        # needs_handoff. multi_step.run_stage1_migration's rollback-on-failure
+        # now resets only back to this commit, not past it -- see there.
+        commit_checkpoint(work_dir, settings, f"checkpoint: applied recipe {state['recipe']}")
+        outcome = "완료" if result.returncode == 0 else "실패"
+        await on_log(f"  OpenRewrite 레시피 적용 {outcome} (exit={result.returncode}, {elapsed:.1f}s)")
         return {"last_build_output": f"[openrewrite exit={result.returncode}]\n{result.output}"}
 
     async def verify_node(state: Stage1State) -> dict:
@@ -96,6 +121,7 @@ def build_stage1_graph(settings: Settings):
         output_dir = work_dir.parent / "output"
         log_path = build_log_path(output_dir, "stage1", "mvn-compile")
         result = await mvn_compile(work_dir, settings, log_path=log_path)
+        await on_log(f"  컴파일 검증: {'통과' if result.returncode == 0 else '실패'}")
         if result.returncode == 0:
             return {"status": "success", "last_build_output": result.output}
         return {"last_build_output": result.output}
@@ -110,21 +136,33 @@ def build_stage1_graph(settings: Settings):
     async def ai_fix_node(state: Stage1State) -> dict:
         work_dir = Path(state["work_dir"])
         output_dir = work_dir.parent / "output"  # sibling of work/ -- see ingest/workspace.py's WorkspacePaths
+        await on_log(f"  AI 수정 시도 {state['attempt'] + 1}/{state['max_attempts']}")
         model = get_chat_model(settings)
         tools = build_tools(work_dir, settings, output_dir, stage="stage1")
         agent = create_agent(model, tools, system_prompt=_AI_FIX_SYSTEM_PROMPT)
 
+        if state["recipe"] is None and state["attempt"] == 0:
+            # No cataloged recipe for this step -- nothing has been applied
+            # yet, so there's no build failure to react to. Ask the AI to
+            # perform the version bump itself; verify_node checks the result.
+            instruction = (
+                f"There is no automated migration recipe for this step: reach target version "
+                f"{state['target_spring_boot']} from the current state of this project. Edit pom.xml and "
+                f"source files as needed, then the build will be verified after your changes."
+            )
+        elif state["recipe"] is None:
+            instruction = (
+                f"Your previous attempt to reach target version {state['target_spring_boot']} still isn't "
+                f"compiling. Build output (may be truncated):\n{state['last_build_output'][-6000:]}"
+            )
+        else:
+            instruction = (
+                f"The build is failing after applying recipe {state['recipe']}. "
+                f"Build output (may be truncated):\n{state['last_build_output'][-6000:]}"
+            )
+
         result = await agent.ainvoke(
-            {
-                "messages": [
-                    HumanMessage(
-                        content=(
-                            f"The build is failing after applying recipe {state['recipe']}. "
-                            f"Build output (may be truncated):\n{state['last_build_output'][-6000:]}"
-                        )
-                    )
-                ]
-            },
+            {"messages": [HumanMessage(content=instruction)]},
             config={"callbacks": [LocalLLMLogger(output_dir, stage="stage1", model=settings.llm_model)]},
         )
         return {"attempt": state["attempt"] + 1, "messages": result["messages"]}
@@ -133,7 +171,9 @@ def build_stage1_graph(settings: Settings):
         work_dir = Path(state["work_dir"])
         # Blast-radius gate: too many files touched -> hand off rather than
         # keep letting the AI iterate unsupervised (spec: "자동 적용 범위 제한").
-        if changed_file_count(work_dir, settings) > state["max_auto_apply_files"]:
+        count = changed_file_count(work_dir, settings)
+        if count > state["max_auto_apply_files"]:
+            await on_log(f"  변경 파일 수({count}개)가 한도({state['max_auto_apply_files']}개)를 초과해 자동 적용 중단")
             return "handoff"
         return "verify"
 
@@ -148,7 +188,7 @@ def build_stage1_graph(settings: Settings):
     graph.add_node("handoff", handoff_node)
 
     graph.add_edge(START, "plan")
-    graph.add_conditional_edges("plan", route_after_plan, {"apply": "apply", END: END})
+    graph.add_conditional_edges("plan", route_after_plan, {"apply": "apply", "ai_fix": "ai_fix", END: END})
     graph.add_edge("apply", "verify")
     graph.add_conditional_edges("verify", route_after_verify, {END: END, "ai_fix": "ai_fix", "handoff": "handoff"})
     graph.add_conditional_edges("ai_fix", route_after_ai_fix, {"verify": "verify", "handoff": "handoff"})
@@ -171,6 +211,7 @@ def initial_state(
         target_spring_boot=target_spring_boot,
         recipe=None,
         artifact=None,
+        plan_precomputed=False,
         attempt=0,
         max_attempts=settings.compile_fix_max_attempts,
         max_auto_apply_files=settings.compile_fix_auto_apply_max_files,
@@ -186,8 +227,9 @@ async def run_stage1_single_step(
     detected_spring_boot: str | None,
     target_spring_boot: str,
     settings: Settings,
+    on_log: LogFn = noop_log,
 ) -> Stage1State:
-    graph = build_stage1_graph(settings)
+    graph = build_stage1_graph(settings, on_log)
     state = initial_state(job_id, work_dir, detected_spring_boot, target_spring_boot, settings)
     return await graph.ainvoke(state)
 
@@ -203,16 +245,23 @@ def initial_state_for_step(job_id: str, work_dir: Path, step: PlanStep, settings
         target_spring_boot=step.target_version,
         recipe=step.recipe,
         artifact=step.artifact,
+        plan_precomputed=True,
         attempt=0,
         max_attempts=settings.compile_fix_max_attempts,
-        max_auto_apply_files=settings.compile_fix_auto_apply_max_files,
+        max_auto_apply_files=(
+            settings.compile_fix_auto_apply_max_files_no_recipe
+            if step.recipe is None
+            else settings.compile_fix_auto_apply_max_files
+        ),
         last_build_output="",
         status="running",
         messages=[],
     )
 
 
-async def run_stage1_step(job_id: str, work_dir: Path, step: PlanStep, settings: Settings) -> Stage1State:
-    graph = build_stage1_graph(settings)
+async def run_stage1_step(
+    job_id: str, work_dir: Path, step: PlanStep, settings: Settings, on_log: LogFn = noop_log
+) -> Stage1State:
+    graph = build_stage1_graph(settings, on_log)
     state = initial_state_for_step(job_id, work_dir, step, settings)
     return await graph.ainvoke(state)

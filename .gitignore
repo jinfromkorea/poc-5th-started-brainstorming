@@ -25,3 +25,8 @@ Thumbs.db
 #
 data/*.zip
 draft/
+
+# .claude/skills/* are local junctions/symlinks into .agents/skills/ (the
+# git-tracked source) so Claude Code can read skills from its own directory
+# without duplicating content -- see .claude/settings.json's `ln -s` permission entry
+.claude/skills/

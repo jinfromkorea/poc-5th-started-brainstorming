@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.config import Settings
+from app.mvnrewrite.mvn_settings import with_public_mirror
 from app.procenv import build_subprocess_env, resolve_executable
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,7 @@ async def run_subprocess(
     if log_path is not None:
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
+    args = with_public_mirror(args, settings)
     executable = resolve_executable(args[0])
     command_display = " ".join([executable, *args[1:]])
     logger.info("실행: %s (cwd=%s)", command_display, cwd)

@@ -36,8 +36,12 @@ def build_handoff_guide(
     last_build_output: str,
     target_summary: str,
 ) -> str:
-    attempted = _summarize_attempts(messages)
+    attempted_summary = _summarize_attempts(messages)
     build_output = last_build_output[-4000:]
+    progress_note = (
+        "이 단계는 검증(빌드)을 통과하지 못해 롤백되었습니다. 이 단계 자체의 변경은 현재 작업 디렉토리에 반영되어 있지 않지만, "
+        "이전 단계까지는 정상적으로 체크포인트 커밋되어 있습니다."
+    )
 
     return f"""# AI 인수인계 가이드: {description}
 
@@ -49,7 +53,7 @@ def build_handoff_guide(
 - 사용한 자동화 수단: {mechanism_used or "(알려진 자동 수단 없음 -- 직접 코드 수정 필요)"}
 
 ## 2. 여기까지 성공적으로 적용된 변경
-이 단계는 검증(빌드)을 통과하지 못해 롤백되었습니다. 이 단계 자체의 변경은 현재 작업 디렉토리에 반영되어 있지 않지만, 이전 단계까지는 정상적으로 체크포인트 커밋되어 있습니다.
+{progress_note}
 
 ## 3. 실패한 에러 메시지
 ```
@@ -57,7 +61,7 @@ def build_handoff_guide(
 ```
 
 ## 4. 이미 시도했지만 실패한 방법
-{attempted}
+{attempted_summary}
 
 ## 5. 다음에 확인/수정해야 할 것
 위 에러 메시지와 시도 기록을 참고해서, `{description}` 작업을 계속 진행하기 위한 코드 수정을 제안해 주세요. 이미 시도했지만 실패한 방법은 반복하지 마세요.

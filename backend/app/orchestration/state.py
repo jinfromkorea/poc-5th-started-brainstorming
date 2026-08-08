@@ -22,6 +22,10 @@ class Stage1State(TypedDict):
     target_spring_boot: str  # e.g. "4.1"
     recipe: str | None  # fully-qualified OpenRewrite recipe class, or None
     artifact: str | None  # recipe's Maven artifact coordinates, or None
+    # True when recipe/artifact were already decided by an outer multi-step
+    # planner (planning.build_migration_plan) -- plan_node then skips its own
+    # single-step planning logic entirely, whether or not recipe is None.
+    plan_precomputed: bool
 
     # Retry bookkeeping (spec: COMPILE_FIX_MAX_ATTEMPTS / _AUTO_APPLY_MAX_FILES).
     attempt: int

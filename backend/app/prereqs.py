@@ -59,11 +59,18 @@ CHECKS = [
         "install_hint": "https://maven.apache.org/download.cgi 에서 설치, PATH에 bin/ 추가",
     },
     {
+        "name": "Git",
+        "binary": "git",
+        "args": ["--version"],
+        "used_for": "Git URL 인입(git clone), work/ 디렉토리의 체크포인트/롤백(git init/commit/reset) — ZIP 인입이어도 항상 필요",
+        "install_hint": "https://git-scm.com/downloads 에서 설치",
+    },
+    {
         "name": "Python",
         "binary": "python",
         "args": ["--version"],
         "used_for": "이 도구 자신(FastAPI 백엔드)의 실행",
-        "install_hint": "https://www.python.org/downloads/ 에서 3.11 이상 설치",
+        "install_hint": "https://www.python.org/downloads/ 에서 3.12 설치",
     },
     {
         "name": "Trivy",
@@ -71,13 +78,6 @@ CHECKS = [
         "args": ["--version"],
         "used_for": "2단계 취약점 스캔",
         "install_hint": "https://aquasecurity.github.io/trivy/latest/getting-started/installation/",
-    },
-    {
-        "name": "npm",
-        "binary": "npm",
-        "args": ["-v"],
-        "used_for": "대상 프로젝트에 frontend-maven-plugin 기반 프론트엔드 모듈이 있어 빌드/검증 시 필요할 수 있음",
-        "install_hint": "https://nodejs.org/ (npm은 Node.js에 포함)에서 설치",
     },
 ]
 

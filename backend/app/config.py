@@ -48,6 +48,13 @@ class Settings(BaseSettings):
     nexus_username: str = ""
     nexus_password: str = ""
 
+    # Maven public-mirror fallback -- for running this tool outside the
+    # corporate network, where a target project's own pom.xml declares an
+    # internal Nexus repository that becomes unreachable. See
+    # mvnrewrite/mvn_settings.py.
+    mvn_public_mirror_enabled: bool = False
+    mvn_public_mirror_url: str = "https://repo.maven.apache.org/maven2"
+
     # App security
     app_secret_key: str = ""
     api_auth_token: str = ""
@@ -74,6 +81,11 @@ class Settings(BaseSettings):
     compile_fixer_enabled: bool = True
     compile_fix_max_attempts: int = 2
     compile_fix_auto_apply_max_files: int = 3
+    # A step with no cataloged recipe means the AI is bumping a version
+    # (pom.xml, deprecated API usage, config classes...) from scratch rather
+    # than fixing one compile error after a recipe -- that naturally touches
+    # more files, so it gets a separate, more generous ceiling.
+    compile_fix_auto_apply_max_files_no_recipe: int = 20
     upload_max_mb: int = 100
     upload_max_extracted_mb: int = 500
     upload_max_files: int = 20000
@@ -84,7 +96,7 @@ class Settings(BaseSettings):
     # LangSmith
     langsmith_api_key: str = ""
     langsmith_tracing: bool = True
-    langsmith_project: str = "poscodx_tracing"
+    langsmith_project: str = "poscodx_tracing_5th"
     langsmith_endpoint: str = "https://api.smith.langchain.com"
 
     # Server

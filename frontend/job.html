@@ -3,52 +3,20 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Maven Stack Upgrade Tool</title>
+  <title>작업 상세 - Maven Stack Upgrade Tool</title>
   <link rel="stylesheet" href="assets/app.css" />
 </head>
 <body>
   <header>
     <h1>Maven Stack Upgrade Tool</h1>
-    <p class="subtitle">사내 Maven 시스템 &rarr; Java 21 / Spring Boot 4.1 / Spring Cloud 2025.1 / Spring AI 2.0 마이그레이션 + OSS 취약점 해소</p>
-    <nav class="page-nav"><a href="history.html">이력 보기</a></nav>
+    <p class="subtitle">선택한 작업의 진행 상황과 결과물을 확인합니다</p>
+    <nav class="page-nav"><a href="index.html">새 작업</a> · <a href="history.html">이력 보기</a></nav>
   </header>
 
   <main>
-    <section id="job-form-panel" class="card">
-      <h2>새 작업 시작</h2>
-      <form id="job-form">
-        <div class="field-row">
-          <span class="label">소스 유형</span>
-          <label class="radio-label"><input type="radio" name="source-type" value="git" checked /> Git URL</label>
-          <label class="radio-label"><input type="radio" name="source-type" value="zip" /> ZIP 업로드</label>
-        </div>
-
-        <div class="field-row" id="git-fields">
-          <label for="git-url">Git URL</label>
-          <input id="git-url" type="text" placeholder="https://git.example.com/team/service.git" />
-          <label for="git-ref">브랜치/태그 (선택)</label>
-          <input id="git-ref" type="text" placeholder="main" />
-        </div>
-
-        <div class="field-row hidden" id="zip-fields">
-          <label for="zip-file">ZIP 파일</label>
-          <input id="zip-file" type="file" accept=".zip" />
-        </div>
-
-        <div class="field-row">
-          <label for="output-version">출력 아티팩트 버전 (선택, 예: 1.0.0)</label>
-          <input id="output-version" type="text" placeholder="비어있으면 원본 버전 유지" />
-        </div>
-
-        <div class="field-row">
-          <label class="checkbox-label"><input id="run-stage1" type="checkbox" checked /> 1단계: 스택 마이그레이션 실행</label>
-          <label class="checkbox-label"><input id="run-stage2" type="checkbox" /> 2단계: 개별 OSS 취약점(CVE) 스캔/패치 실행</label>
-        </div>
-
-        <button type="submit" id="submit-btn">작업 시작</button>
-      </form>
-      <p id="form-error" class="error hidden"></p>
-    </section>
+    <p id="job-not-found" class="error hidden">
+      해당 작업을 찾을 수 없습니다. <a href="history.html">이력 목록으로 돌아가기</a>
+    </p>
 
     <section id="progress-panel" class="card hidden">
       <h2>진행 상황</h2>
@@ -129,6 +97,6 @@
 
   <script src="assets/common.js"></script>
   <script src="assets/job-view.js"></script>
-  <script src="assets/app.js"></script>
+  <script src="assets/job.js"></script>
 </body>
 </html>

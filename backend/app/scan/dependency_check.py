@@ -56,7 +56,41 @@ async def run_dependency_check(
         f"org.owasp:dependency-check-maven:{DEPENDENCY_CHECK_PLUGIN_VERSION}:check",
         "-Dformat=JSON",
         f"-DdataDirectory={settings.dependency_check_dir}",
+        # NVD updates happen only via the explicit cache-refresh flow
+        # (orchestration/cache_refresh.run_cache_refresh), same rationale as
+        # trivy.py's --skip-db-update.
+        "-DautoUpdate=false",
     ]
     if settings.nvd_api_key:
         args.append(f"-DnvdApiKey={settings.nvd_api_key}")
     return await run_subprocess(args, work_dir, settings, log_path=log_path, on_line=on_line)
+
+
+
+# A cold NVD cache's first full sync can take 30+ minutes (backend/README.md
+# §5) -- BUILD_TIMEOUT_SECONDS (900s/15min default) is sized for a target
+# project's mvn build, not this. Use a generous fixed ceiling instead.
+NVD_UPDATE_TIMEOUT_SECONDS = 3600
+
+
+async def run_dependency_check_update_only(
+    settings: Settings,
+    log_path: Path | None = None,
+    on_line: Callable[[str], None] | None = None,
+) -> SubprocessResult:
+    """Refreshes the NVD cache only, independent of any project. Confirmed
+    empirically: run from a directory with no pom.xml, Maven auto-generates
+    a "standalone-pom" stub and the goal runs fine -- no dummy pom.xml needed."""
+    settings.dependency_check_dir.mkdir(parents=True, exist_ok=True)
+    settings.jobs_dir.mkdir(parents=True, exist_ok=True)
+    args = [
+        "mvn",
+        "-B",
+        f"org.owasp:dependency-check-maven:{DEPENDENCY_CHECK_PLUGIN_VERSION}:update-only",
+        f"-DdataDirectory={settings.dependency_check_dir}",
+    ]
+    if settings.nvd_api_key:
+        args.append(f"-DnvdApiKey={settings.nvd_api_key}")
+    return await run_subprocess(
+        args, settings.jobs_dir, settings, timeout_seconds=NVD_UPDATE_TIMEOUT_SECONDS, log_path=log_path, on_line=on_line
+    )
