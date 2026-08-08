@@ -303,6 +303,7 @@ Windows에서는 `uvicorn --reload`를 쓰면 안 된다 — reload가 이벤트
 
 ## 16. 참고
 
+- LangGraph 그래프별 노드 상세(Stage 1/2 자가검증 루프): [`docs/langgraph-orchestration.md`](langgraph-orchestration.md)
 - 설계 배경/의사결정 근거: [`docs/superpowers/specs/2026-08-06-oss-dependency-governance-design.md`](superpowers/specs/2026-08-06-oss-dependency-governance-design.md)
 - 백엔드 실행 방법: [`backend/README.md`](../backend/README.md)
 - 프론트엔드 실행 방법: [`frontend/README.md`](../frontend/README.md)
