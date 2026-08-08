@@ -23,6 +23,31 @@ class GitCheckpointError(Exception):
     pass
 
 
+# Tool-generated files that are never part of the actual migration and must
+# never end up in the diff -- e.g. Maven Versions Plugin's own backup copy of
+# a pom it just rewrote (org.codehaus.mojo:versions-maven-plugin defaults to
+# <file>.versionsBackup; only mvn_client.py's own versions:set call opts out
+# via -DgenerateBackupPoms=false, but dependency_patch.py's versions:set-property
+# / versions:use-dep-version calls -- used by Stage 2's CVE fixes -- don't, so
+# these backups can still appear on disk mid-run).
+_GITIGNORE_EXTRA_LINES = ["*.versionsBackup"]
+
+
+def _ensure_gitignore(work_dir: Path, lines: list[str]) -> None:
+    """Appends any of `lines` missing from work_dir/.gitignore (creating the
+    file if the ingested project didn't ship one), so that git add -A -- at
+    baseline and every checkpoint after it -- never picks these files up."""
+    gitignore_path = work_dir / ".gitignore"
+    existing = gitignore_path.read_text(encoding="utf-8").splitlines() if gitignore_path.exists() else []
+    missing = [line for line in lines if line not in existing]
+    if not missing:
+        return
+    with gitignore_path.open("a", encoding="utf-8") as f:
+        if existing and existing[-1] != "":
+            f.write("\n")
+        f.write("\n".join(missing) + "\n")
+
+
 def _run_git(work_dir: Path, args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess:
     # encoding="utf-8" (not the default locale.getpreferredencoding(), which
     # is cp949 on Korean Windows) -- git's own output is UTF-8 regardless of
@@ -83,10 +108,14 @@ def git_init_and_baseline_commit(work_dir: Path, settings: Settings) -> str:
     """git init + commit everything currently in work_dir as the baseline,
     authored by the tool's own bot identity (not the developer running it,
     and not whatever identity the target project's original history had --
-    work/ always starts a fresh, minimal history of its own). Returns the
-    baseline commit hash."""
+    work/ always starts a fresh, minimal history of its own). Also patches
+    work_dir/.gitignore with entries for known tool-generated backup files
+    (see _GITIGNORE_EXTRA_LINES) before the very first add, so nothing ever
+    commits them, even from checkpoints made later in the pipeline. Returns
+    the baseline commit hash."""
     env = build_subprocess_env(settings)
     _run_git(work_dir, ["init", "-q"], env)
+    _ensure_gitignore(work_dir, _GITIGNORE_EXTRA_LINES)
     _run_git(work_dir, ["add", "-A"], env)
     _run_git(work_dir, ["commit", "-q", "-m", "baseline: ingest snapshot", "--allow-empty"], _commit_env(settings))
     return _head(work_dir, env)
@@ -121,6 +150,31 @@ def diff_since(work_dir: Path, settings: Settings, baseline_sha: str) -> str:
     so this is automatically "verified changes only" without extra filtering."""
     env = build_subprocess_env(settings)
     return _run_git(work_dir, ["diff", baseline_sha, "HEAD"], env).stdout
+
+
+def _ordered_shas(work_dir: Path, settings: Settings) -> list[str]:
+    env = build_subprocess_env(settings)
+    return _run_git(work_dir, ["log", "--reverse", "--format=%H"], env).stdout.split()
+
+
+def resolve_ingest_baseline(work_dir: Path, settings: Settings) -> str:
+    """The very first commit ever made in work_dir's history -- always equal
+    to IngestResult.baseline_commit, regardless of whether an output_version
+    checkpoint was later added on top. Used to recover that value when
+    resuming Stage 2 after a HITL approval pause (orchestration/pipeline.py's
+    run_pipeline_resume_stage2), since it isn't otherwise persisted anywhere."""
+    return _ordered_shas(work_dir, settings)[0]
+
+
+def resolve_stage_baseline(work_dir: Path, settings: Settings, output_version: str | None) -> str:
+    """Reconstructs the baseline commit Stage 1/2's own rollback logic treats
+    as its protected floor (run_pipeline's `baseline` local variable after
+    its optional reassignment by apply_output_version): the 2nd commit if
+    output_version was requested (the version-set checkpoint), else the same
+    as resolve_ingest_baseline. Relies on run_pipeline's fixed commit order
+    (ingest baseline -> [output_version checkpoint] -> Stage 1 steps...)."""
+    shas = _ordered_shas(work_dir, settings)
+    return shas[1] if output_version and len(shas) > 1 else shas[0]
 
 
 def log_since(work_dir: Path, settings: Settings, baseline_sha: str) -> str:
