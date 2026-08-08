@@ -8,6 +8,8 @@ itself, not the underlying mvn/AI/scan mechanics.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from app.checkpoint.git_repo import git_init_and_baseline_commit
@@ -364,6 +366,62 @@ async def test_run_pipeline_resume_stage2_completes_after_approval(monkeypatch, 
     report_text = (job_paths.output / "report.md").read_text(encoding="utf-8")
     assert "stage1 report" in report_text
     assert "stage2 report" in report_text
+
+
+async def test_cancel_during_run_marks_job_cancelled_and_writes_marker(monkeypatch, settings, db, job_paths):
+    # _finalize_cancelled derives output_dir as settings.jobs_dir / job_id /
+    # "output" (same pattern as run_pipeline_resume_stage2), so job_id and
+    # settings.jobs_data_dir must line up with job_paths for that derived
+    # path to land on the directory job_paths already created.
+    job_id = job_paths.root.name
+    settings.jobs_data_dir = str(job_paths.root.parent)
+    _create_job(db, job_id)
+
+    monkeypatch.setattr("app.orchestration.pipeline.ingest", lambda job_id, spec, settings_: _fake_ingest_result(job_id, job_paths))
+
+    started = asyncio.Event()
+
+    async def slow_baseline_scan(work_dir, output_dir, settings_):
+        started.set()
+        await asyncio.sleep(30)  # never reached -- the Task is cancelled first
+        raise AssertionError("should have been cancelled before this returned")
+
+    monkeypatch.setattr("app.orchestration.pipeline.run_combined_scan", slow_baseline_scan)
+
+    task = asyncio.ensure_future(
+        run_pipeline(
+            job_id=job_id,
+            spec=ZipSourceSpec(zip_path=job_paths.root / "fake.zip"),
+            output_version=None,
+            run_stage1=True,
+            run_stage2=False,
+            settings=settings,
+            session_factory=db,
+        )
+    )
+    await started.wait()  # let run_pipeline actually reach the (now-blocked) scan call
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    with db() as session:
+        job = session.get(Job, job_id)
+        assert job.status == "cancelled"
+
+        events = session.query(JobEvent).filter_by(job_id=job_id).order_by(JobEvent.seq).all()
+        assert events[-1].event_type == "status"
+        assert events[-1].data == {"status": "cancelled"}
+
+    marker = job_paths.output / "CANCELLED"
+    assert marker.exists()
+
+    # a second cancellation-finalize call for an already-cancelled job must
+    # be a no-op (idempotency the JobManager._run fallback relies on)
+    from app.orchestration.pipeline import _finalize_cancelled
+
+    await _finalize_cancelled(job_id, settings, db)
+    with db() as session:
+        assert session.get(Job, job_id).status == "cancelled"
 
 
 async def test_ingest_failure_marks_job_failed(monkeypatch, settings, db, job_paths):

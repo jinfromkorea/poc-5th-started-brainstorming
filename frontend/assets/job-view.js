@@ -1,6 +1,6 @@
 "use strict";
 
-const TERMINAL_STATUSES = new Set(["success", "needs_handoff", "failed"]);
+const TERMINAL_STATUSES = new Set(["success", "needs_handoff", "failed", "cancelled"]);
 const SEVERITY_ORDER = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, UNKNOWN: 4 };
 
 const analysisPanel = el("analysis-panel");
@@ -20,6 +20,7 @@ const progressPanel = el("progress-panel");
 const jobIdDisplay = el("job-id-display");
 const statusBadge = el("status-badge");
 const proceedBtn = el("proceed-btn");
+const stopBtn = el("stop-btn");
 const logList = el("log-list");
 const artifactsPanel = el("artifacts-panel");
 const viewDiffBtn = el("view-diff-btn");
@@ -133,6 +134,30 @@ function showProceedButton(jobId) {
   };
 }
 
+function showStopButton(jobId) {
+  stopBtn.classList.remove("hidden");
+  stopBtn.disabled = false;
+  stopBtn.textContent = "중지";
+  stopBtn.onclick = async () => {
+    if (!confirm("정말 이 작업을 중지할까요? 지금까지의 변경 내용은 저장되지 않습니다.")) return;
+    stopBtn.disabled = true;
+    stopBtn.textContent = "중지 중...";
+    try {
+      const res = await fetch(apiUrl(`/jobs/${jobId}/cancel`), { method: "POST", headers: authHeaders() });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || `HTTP ${res.status}`);
+      }
+      // no reconnect needed -- the already-open SSE connection delivers the
+      // confirmed "cancelled" status event once cleanup actually finishes.
+    } catch (err) {
+      appendLog(`작업 중지 요청 실패: ${err.message}`, true);
+      stopBtn.disabled = false;
+      stopBtn.textContent = "중지";
+    }
+  };
+}
+
 function connectSSE(jobId) {
   if (currentEventSource) {
     currentEventSource.close();
@@ -173,8 +198,11 @@ function connectSSE(jobId) {
       proceedBtn.classList.add("hidden");
     }
     if (TERMINAL_STATUSES.has(data.status)) {
+      stopBtn.classList.add("hidden");
       es.close();
       loadArtifacts(jobId);
+    } else {
+      showStopButton(jobId);
     }
   });
 

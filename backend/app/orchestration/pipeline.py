@@ -13,10 +13,12 @@ about to run on top of it).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy.orm import Session, sessionmaker
@@ -25,7 +27,7 @@ from app.checkpoint.git_repo import diff_since, resolve_ingest_baseline, resolve
 from app.config import Settings
 from app.ingest.errors import IngestError
 from app.ingest.workspace import SourceSpec, ingest
-from app.models.job import Job
+from app.models.job import Job, TERMINAL_JOB_STATUSES
 from app.mvnrewrite.mvn_client import mvn_effective_pom
 from app.mvnrewrite.pom_parser import extract_versions
 from app.mvnrewrite.subprocess_runner import build_log_path
@@ -80,6 +82,38 @@ def make_emit_log(session_factory: sessionmaker[Session], job_id: str) -> tuple[
         await emit("log", {"message": message})
 
     return emit, log
+
+
+async def _finalize_cancelled(job_id: str, settings: Settings, session_factory: sessionmaker[Session]) -> None:
+    """Marks job_id cancelled (spec: docs/superpowers/specs/
+    2026-08-08-job-cancellation-design.md), from whichever of three places
+    a POST /jobs/{id}/cancel request actually needs to finalize it:
+    - directly, from the API endpoint, when there's no live Task to cancel
+      (awaiting_approval, or the process restarted and lost track of it);
+    - from concurrency.JobManager's on_queued_cancel fallback, if the Task
+      was still waiting on the concurrency semaphore and never even started
+      running this module's own pipeline coroutines;
+    - from this module's own except asyncio.CancelledError below, once the
+      cancellation has propagated back up through a running pipeline.
+
+    Idempotent by design: the last two call sites can both legitimately fire
+    for the same cancellation (see JobManager._run's own docstring), so this
+    is a no-op once the job is already terminal."""
+    with session_factory() as session:
+        job = session.get(Job, job_id)
+        if job is None or job.status in TERMINAL_JOB_STATUSES:
+            return
+
+    await set_job_status(session_factory, job_id, "cancelled")
+    emit, _log = make_emit_log(session_factory, job_id)
+    await emit("status", {"status": "cancelled"})
+
+    output_dir = settings.jobs_dir / job_id / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "CANCELLED").write_text(
+        f"이 작업은 {datetime.now(UTC).isoformat(timespec='seconds')}에 사용자 요청으로 강제 종료되었습니다.\n",
+        encoding="utf-8",
+    )
 
 
 async def _run_stage2_block(
@@ -210,6 +244,14 @@ async def run_pipeline(
     except IngestError as exc:
         await set_job_status(session_factory, job_id, "failed", error_message=str(exc))
         await emit("status", {"status": "failed", "error": str(exc)})
+    except asyncio.CancelledError:
+        # A human force-stopped the job (POST /jobs/{id}/cancel) -- not a
+        # failure, so this is deliberately kept out of the except Exception
+        # branch below (CancelledError isn't an Exception subclass anyway,
+        # but the separation also documents the intent). Re-raise so the
+        # Task actually ends up cancelled, not merely "returned".
+        await _finalize_cancelled(job_id, settings, session_factory)
+        raise
     except Exception as exc:  # noqa: BLE001 -- a job failure must never crash the server process
         await set_job_status(session_factory, job_id, "failed", error_message=str(exc))
         await emit("status", {"status": "failed", "error": str(exc)})
@@ -257,6 +299,9 @@ async def run_pipeline_resume_stage2(job_id: str, settings: Settings, session_fa
         await set_job_status(session_factory, job_id, final_status, report_markdown=final_report)
         await emit("status", {"status": final_status})
 
+    except asyncio.CancelledError:
+        await _finalize_cancelled(job_id, settings, session_factory)
+        raise
     except Exception as exc:  # noqa: BLE001 -- same rationale as run_pipeline
         await set_job_status(session_factory, job_id, "failed", error_message=str(exc))
         await emit("status", {"status": "failed", "error": str(exc)})

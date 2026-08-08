@@ -23,8 +23,13 @@ from app.models.db import Base
 # human calls POST /jobs/{id}/proceed. Deliberately NOT terminal (see below)
 # -- a client with an open SSE connection just keeps waiting and picks up
 # Stage 2's events live once approved, no reconnect needed.
-JOB_STATUSES = ("queued", "running", "awaiting_approval", "success", "needs_handoff", "failed")
-TERMINAL_JOB_STATUSES = frozenset({"success", "needs_handoff", "failed"})
+#
+# "cancelled": a human force-stopped the job via POST /jobs/{id}/cancel
+# (spec: docs/superpowers/specs/2026-08-08-job-cancellation-design.md). IS
+# terminal -- unlike awaiting_approval, nothing more will ever happen to
+# this job.
+JOB_STATUSES = ("queued", "running", "awaiting_approval", "success", "needs_handoff", "failed", "cancelled")
+TERMINAL_JOB_STATUSES = frozenset({"success", "needs_handoff", "failed", "cancelled"})
 
 
 class Job(Base):

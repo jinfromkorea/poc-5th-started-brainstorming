@@ -17,9 +17,9 @@ from app.api.deps import require_api_token
 from app.config import Settings, get_settings
 from app.ingest.workspace import GitSourceSpec, ZipSourceSpec
 from app.models.db import get_db_session, session_factory
-from app.models.job import Job, next_job_id
+from app.models.job import TERMINAL_JOB_STATUSES, Job, next_job_id
 from app.orchestration.concurrency import get_job_manager
-from app.orchestration.pipeline import run_pipeline, run_pipeline_resume_stage2
+from app.orchestration.pipeline import _finalize_cancelled, run_pipeline, run_pipeline_resume_stage2
 from app.schemas.job import JobCreateResponse, JobStatusResponse
 from app.streaming.sse import stream_job_events
 
@@ -73,6 +73,7 @@ async def create_job(
     manager.start(
         job_id,
         lambda: run_pipeline(job_id, spec, output_version, run_stage1, run_stage2, settings, factory),
+        on_queued_cancel=lambda: _finalize_cancelled(job_id, settings, factory),
     )
 
     return JobCreateResponse(job_id=job_id, status="queued")
@@ -141,6 +142,48 @@ async def proceed_job(
     manager.start(job_id, lambda: run_pipeline_resume_stage2(job_id, settings, factory))
 
     return JobCreateResponse(job_id=job_id, status="running")
+
+
+@router.post("/{job_id}/cancel", response_model=JobCreateResponse)
+async def cancel_job(
+    job_id: str,
+    settings: Settings = Depends(get_settings),
+    db=Depends(get_db_session),
+) -> JobCreateResponse:
+    """Force-stops a non-terminal job (spec: docs/superpowers/specs/
+    2026-08-08-job-cancellation-design.md). Returns as soon as cancellation
+    is *requested*, not once it's *done* -- the frontend's already-open SSE
+    connection picks up the confirmed "cancelled" status event once the
+    underlying Task (or the awaiting_approval direct-finalize path below)
+    actually finishes cleaning up."""
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"unknown job_id: {job_id}")
+    if job.status in TERMINAL_JOB_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"job {job_id} is already terminal (status={job.status})",
+        )
+
+    factory = session_factory(settings)
+    manager = get_job_manager(settings.max_concurrent_repos)
+
+    if job.status == "awaiting_approval":
+        # run_pipeline already returned after pausing here -- there's no
+        # live Task to cancel and nothing running to kill.
+        await _finalize_cancelled(job_id, settings, factory)
+    elif not manager.cancel(job_id):
+        # DB says running/queued but the manager has no Task for it (e.g.
+        # the process restarted and lost its in-memory task registry) --
+        # there's genuinely nothing to kill, so just correct the record.
+        await _finalize_cancelled(job_id, settings, factory)
+    # else: task.cancel() was called successfully -- the actual DB/marker
+    # finalization happens asynchronously (pipeline.py's own except
+    # asyncio.CancelledError, or JobManager's on_queued_cancel fallback),
+    # and reaches the client via the already-open SSE stream.
+
+    db.refresh(job)
+    return JobCreateResponse(job_id=job_id, status=job.status)
 
 
 @router.get("/{job_id}/events")

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from app.orchestration.concurrency import JobManager
 
 
@@ -43,6 +45,76 @@ async def test_get_task_returns_the_scheduled_task():
     assert manager.get_task("nonexistent") is None
 
     await task
+
+
+async def test_cancel_while_queued_calls_on_queued_cancel_without_starting_coro_factory():
+    manager = JobManager(max_concurrent=1)
+    started = asyncio.Event()
+    blocker = asyncio.Event()
+    coro_factory_called = False
+    fallback_called = False
+
+    async def first():
+        started.set()
+        await blocker.wait()
+
+    async def never_should_run():
+        nonlocal coro_factory_called
+        coro_factory_called = True
+
+    async def fallback():
+        nonlocal fallback_called
+        fallback_called = True
+
+    first_task = manager.start("job-1", first)
+    await started.wait()  # job-1 now holds the only slot
+
+    second_task = manager.start("job-2", never_should_run, on_queued_cancel=fallback)
+    await asyncio.sleep(0)  # job-2 is blocked on the semaphore, not started yet
+
+    assert manager.cancel("job-2") is True
+    with pytest.raises(asyncio.CancelledError):
+        await second_task
+
+    assert fallback_called is True
+    assert coro_factory_called is False
+
+    blocker.set()
+    await first_task
+
+
+async def test_cancel_while_running_also_calls_on_queued_cancel():
+    """_run doesn't distinguish "cancelled while still queued" from
+    "cancelled while coro_factory was already running and re-raised" --
+    on_queued_cancel fires in both cases. Safety relies on the callee
+    (pipeline._finalize_cancelled) being idempotent, not on JobManager
+    telling the two apart (see docs/superpowers/specs/
+    2026-08-08-job-cancellation-design.md)."""
+    manager = JobManager(max_concurrent=1)
+    started = asyncio.Event()
+    fallback_calls = 0
+
+    async def work():
+        started.set()
+        await asyncio.sleep(10)  # never actually reached -- cancelled first
+
+    async def fallback():
+        nonlocal fallback_calls
+        fallback_calls += 1
+
+    task = manager.start("job-1", work, on_queued_cancel=fallback)
+    await started.wait()  # coro_factory is now running, past the semaphore
+
+    assert manager.cancel("job-1") is True
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert fallback_calls == 1
+
+
+def test_cancel_returns_false_for_unknown_job_id():
+    manager = JobManager(max_concurrent=1)
+    assert manager.cancel("nonexistent") is False
 
 
 async def test_third_job_does_not_start_until_a_slot_frees(monkeypatch):

@@ -114,6 +114,19 @@ async def run_subprocess(
         await proc.wait()
         logger.warning("시간 초과: %s (%ds 경과, cwd=%s)", command_display, timeout, cwd)
         raise SubprocessTimeoutError(f"{' '.join(args)!r} timed out after {timeout}s in {cwd}") from exc
+    except asyncio.CancelledError:
+        # A running job was force-cancelled (spec: docs/superpowers/specs/
+        # 2026-08-08-job-cancellation-design.md) -- kill the real OS process
+        # too, not just the asyncio await, so it doesn't keep running as an
+        # orphan. Re-raise (don't swallow) so the Task actually ends up
+        # cancelled.
+        proc.kill()
+        await proc.wait()
+        if log_file is not None:
+            log_file.write("[강제종료됨]\n")
+            log_file.flush()
+        logger.warning("강제종료: %s (cwd=%s)", command_display, cwd)
+        raise
     finally:
         if log_file is not None:
             log_file.close()

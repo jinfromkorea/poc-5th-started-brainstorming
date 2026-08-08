@@ -26,7 +26,7 @@
 
 **검증**: `backend/tests/unit/test_concurrency.py`(이미 존재, 여기에 추가):
 - 세마포어를 다 채워서 두 번째 job이 대기하게 만든 뒤 `cancel()` 호출 → `on_queued_cancel`이 호출되는지, `coro_factory`는 실행되지 않는지.
-- Task가 이미 실행 중일 때 `cancel()` 호출 → `on_queued_cancel`이 호출되지 않는지(coro_factory 내부의 취소 처리가 따로 있다고 가정하고, 여기서는 이중 호출 안 하는 것만 확인 — 실제 이중 호출 방지는 `_finalize_cancelled`의 멱등성이 담당하므로 이 레벨에서 굳이 막을 필요는 없음, 스펙 §JobManager._run 참고).
+- Task가 이미 실행 중일 때 `cancel()` 호출 → **`on_queued_cancel`도 마찬가지로 호출됨을 확인**(구현상 `_run`은 "세마포어 대기 중 취소"와 "`coro_factory()` 내부에서 이미 처리되고 다시 올라온 취소"를 구분하지 않는다 — 어느 경우든 `except asyncio.CancelledError`에 도달하면 호출한다. 안전한 이유는 `_finalize_cancelled`가 멱등하기 때문이지, `JobManager`가 두 경우를 가려내서가 아니다. `test_third_job_does_not_start_until_a_slot_frees`처럼 `coro_factory`가 `CancelledError`를 그냥 전파하는 상황을 흉내 내서 검증).
 - 등록되지 않은 job_id로 `cancel()` → `False`.
 
 ## 3. `mvnrewrite/subprocess_runner.py` — 서브프로세스 강제 종료

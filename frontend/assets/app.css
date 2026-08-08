@@ -341,6 +341,11 @@ button.secondary:hover:not(:disabled) {
   color: var(--danger);
 }
 
+.status-cancelled {
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+}
+
 .severity-critical,
 .severity-high {
   background: var(--danger-bg);
