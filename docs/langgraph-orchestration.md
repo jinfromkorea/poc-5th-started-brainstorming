@@ -19,7 +19,7 @@
 | 부품 | 파일 | 역할 |
 |---|---|---|
 | `get_chat_model` | [`llm.py`](../backend/app/orchestration/llm.py) | `ChatOpenAI` 인스턴스를 만드는 lazy 팩토리(`OPENAI_API_KEY` 없으면 노드 실행 시점에 에러 — import 시점이 아님, LLM을 쓰지 않는 단위테스트가 키 없이도 돌게 하기 위함). |
-| `build_tools` | [`tools.py`](../backend/app/orchestration/tools.py) | `ai_fix` 노드의 에이전트에게 주는 5개 도구: `read_file`, `edit_file`(전체 파일 내용 덮어쓰기), `run_build`(`mvn compile`), `run_recipe`(OpenRewrite 레시피 1개 직접 실행), `list_available_recipes`. 모든 파일 접근은 `work_dir` 밖으로 못 나가게 경로 검증(`_safe_path`)됨. |
+| `build_tools` | [`tools.py`](../backend/app/orchestration/tools.py) | `ai_fix` 노드의 에이전트에게 주는 5개 도구: `read_file`, `edit_file`(전체 파일 내용 덮어쓰기), `run_build`(`mvn test-compile` — 운영+테스트 소스 컴파일, 테스트 실행은 안 함), `run_recipe`(OpenRewrite 레시피 1개 직접 실행), `list_available_recipes`. 모든 파일 접근은 `work_dir` 밖으로 못 나가게 경로 검증(`_safe_path`)됨. |
 | `LocalLLMLogger` | [`callbacks.py`](../backend/app/orchestration/callbacks.py) | `ai_fix` 노드가 `agent.ainvoke`를 호출할 때마다 콜백으로 주입. LLM 호출 1건당 `output/logs/{stage}/llm/*.md` 1개를 남김(system prompt, 대화 이력, 툴 호출, 응답, 토큰 사용량). 그래프 노드가 실행될 때마다(=재시도마다) **새 인스턴스**가 만들어지므로 파일명의 타임스탬프로 전체 순서를 복원한다. |
 | `create_agent` | `langchain.agents` (외부) | `ai_fix` 노드 안에서 모델+도구+시스템 프롬프트로 임시 ReAct형 에이전트를 조립. 그래프 노드 자체는 아니고, 노드 내부에서 한 번 쓰고 버려지는 하위 실행기. |
 
@@ -36,6 +36,7 @@
 | `plan_precomputed` | `bool` | 외부 계획 수립기(`planning.build_migration_plan`)가 이미 `recipe`/`artifact`를 정해서 넘겼는지 — `True`면 `plan` 노드가 자체 계산을 건너뜀 |
 | `attempt`, `max_attempts` | `int` | AI 수정 재시도 카운터/상한(`COMPILE_FIX_MAX_ATTEMPTS`) |
 | `max_auto_apply_files` | `int` | 자동 적용 파일 수 상한(`COMPILE_FIX_AUTO_APPLY_MAX_FILES`, 레시피 없는 스텝은 `_NO_RECIPE`로 더 관대함) |
+| `apply_returncode` | `int \| None` | 방금 `apply` 노드가 돌린 레시피의 종료 코드. `recipe=None`이라 `apply` 자체를 안 거친 스텝은 계속 `None`. `route_after_apply`(§3.4)가 이 값으로 `verify`를 건너뛸지 정함 |
 | `last_build_output` | `str` | 가장 최근 빌드/레시피 실행 결과 (다음 AI 수정 프롬프트에 그대로 삽입됨) |
 | `status` | `"running" \| "success" \| "failed" \| "needs_handoff"` | 그래프 종료 시 외부 반복자가 보는 최종 결과 |
 | `messages` | `Annotated[list, add_messages]` | `ai_fix`가 매 시도마다 반환하는 에이전트 대화(시스템/사람/AI/도구 메시지)가 **누적**됨(reducer `add_messages`) — 실패 시 handoff 가이드가 이 전체 이력을 사용 |
@@ -50,8 +51,9 @@ flowchart TD
     plan -.->|recipe 있음| apply["apply"]
     plan -.->|"recipe=None\n(카탈로그에 알려진 레시피 없음)"| ai_fix["ai_fix"]
     plan -.->|"status=success\n(이미 목표 버전 — 스킵)"| END(["END"])
-    apply --> verify["verify"]
-    verify -.->|mvn compile 성공| END
+    apply -.->|"레시피 적용 성공(exit=0)"| verify["verify"]
+    apply -.->|"레시피 적용 자체가 실패(exit≠0)"| ai_fix
+    verify -.->|mvn test-compile 성공| END
     verify -.->|"실패, attempt < max_attempts"| ai_fix
     verify -.->|"실패, attempt >= max_attempts"| handoff["handoff"]
     ai_fix -.->|changed_file_count ≤ max_auto_apply_files| verify
@@ -64,14 +66,15 @@ flowchart TD
 | 노드 | 함수 | 하는 일 | 부수효과 |
 |---|---|---|---|
 | **plan** | `plan_node` | `plan_precomputed=True`면 그대로 통과. 아니면 `RecipeCatalog`에서 감지 버전→목표 버전으로 가는 다음 홉을 조회(`plan_next_step`, 순수함수 — I/O 없음). 이미 목표 버전이면 `status="success"`. 카탈로그에 다음 홉이 없으면 `recipe=None`으로 두고 파일 수 상한을 `_NO_RECIPE` 값으로 바꿔서 반환 | 없음 (순수 계산) |
-| **apply** | `apply_node` | `run_openrewrite_recipes`로 `mvnrewrite/rewrite_client`를 통해 `org.openrewrite.maven:rewrite-maven-plugin:RELEASE`를 직접 좌표 호출(대상 프로젝트 `pom.xml`에 플러그인을 주입하지 않음) | 실행 로그를 `output/logs/stage1/openrewrite-*.log`에 기록. **레시피 적용 직후, verify 결과와 무관하게 `commit_checkpoint`로 git 커밋** — 이후 `ai_fix`가 실패해도 이 레시피의 기계적 변경은 살아남음(§3.4) |
-| **verify** | `verify_node` | `mvn compile` 실행. 성공하면 `status="success"` | 로그를 `output/logs/stage1/mvn-compile-*.log`에 기록 |
+| **apply** | `apply_node` | `run_openrewrite_recipes`로 `mvnrewrite/rewrite_client`를 통해 `org.openrewrite.maven:rewrite-maven-plugin:RELEASE`를 직접 좌표 호출(대상 프로젝트 `pom.xml`에 플러그인을 주입하지 않음). 종료 코드를 `apply_returncode`에 기록 | 실행 로그를 `output/logs/stage1/openrewrite-*.log`에 기록. **레시피 적용 직후, verify 결과와 무관하게 `commit_checkpoint`로 git 커밋** — 이후 `ai_fix`가 실패해도 이 레시피의 기계적 변경은 살아남음(§3.4) |
+| **verify** | `verify_node` | `mvn test-compile`(운영+테스트 소스 컴파일, 테스트 실행은 안 함) 실행. 성공하면 `status="success"` | 로그를 `output/logs/stage1/mvn-test-compile-*.log`에 기록 |
 | **ai_fix** | `ai_fix_node` | `create_agent`로 `read_file`/`edit_file`/`run_build`/`run_recipe`/`list_available_recipes` 도구를 쓰는 에이전트를 즉석 조립해 호출. 두 가지 경우: (1) 레시피 적용 후 컴파일 실패 → 빌드 에러를 고쳐달라는 프롬프트, (2) 레시피 자체가 없음(`attempt==0`) → 목표 버전까지 직접 올려달라는 프롬프트, 이후 재시도부터는 "아직도 컴파일 안 된다"는 빌드 출력을 계속 붙여서 재요청 | `attempt`를 1 증가, 에이전트가 만든 메시지들을 `messages`에 누적. **git 커밋은 하지 않음** — 성공 여부가 아직 미확인이므로 `verify`가 다시 확인한 뒤에야 그 결과가 다음 스텝/handoff로 이어짐 |
 | **handoff** | `handoff_node` | `status="needs_handoff"`로 표시만 함 | 없음 — 실제 롤백/가이드 생성은 그래프 밖, `multi_step.run_stage1_migration`이 함(§3.4) |
 
 ### 3.4 라우팅 함수 (조건부 엣지)
 
 - `route_after_plan`: `status=="success"` → `END`(이미 목표), `recipe is None` → `ai_fix`(레시피 없이 AI가 직접), 그 외 → `apply`.
+- `route_after_apply`(2026-08-09 추가): `apply_returncode == 0` → `verify`, 아니면(레시피 실행 자체가 실패) → `verify`를 건너뛰고 곧장 `ai_fix`. `verify`로 보내면 아무 변경도 없이 우연히 컴파일이 통과해 조용히 "성공"으로 끝나거나, 원래 실패 원인이 `verify`의 결과로 덮어써져 사라질 수 있어서 — 자세한 배경은 `docs/superpowers/specs/2026-08-09-stage1-apply-verify-integrity-design.md` 참고.
 - `route_after_verify`: 성공 → `END`, `attempt >= max_attempts` → `handoff`, 그 외 → `ai_fix`.
 - `route_after_ai_fix`: `changed_file_count(work_dir)`(git으로 마지막 체크포인트 이후 변경된 파일 수)가 `max_auto_apply_files`를 넘으면 "블라스트 반경 게이트"로 `handoff`, 아니면 `verify`로 돌아가 다시 검증.
 

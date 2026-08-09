@@ -12,7 +12,7 @@ from pathlib import Path
 from langchain_core.tools import BaseTool, tool
 
 from app.config import Settings
-from app.mvnrewrite.mvn_client import mvn_compile
+from app.mvnrewrite.mvn_client import mvn_test_compile
 from app.mvnrewrite.recipe_catalog import RecipeCatalog
 from app.mvnrewrite.rewrite_client import run_openrewrite_recipes
 from app.mvnrewrite.subprocess_runner import build_log_path
@@ -96,9 +96,9 @@ def build_tools(work_dir: Path, settings: Settings, output_dir: Path, stage: str
 
     @tool
     async def run_build() -> str:
-        """Run `mvn compile` against the project and return exit code + combined output."""
+        """Run `mvn test-compile` (main + test sources, tests not executed) against the project and return exit code + combined output."""
         log_path = build_log_path(output_dir, stage, "ai-fix-build")
-        result = await mvn_compile(work_dir, settings, log_path=log_path)
+        result = await mvn_test_compile(work_dir, settings, log_path=log_path)
         return f"exit={result.returncode}\n{result.output}"
 
     @tool

@@ -32,6 +32,14 @@ class Stage1State(TypedDict):
     max_attempts: int
     max_auto_apply_files: int
 
+    # Exit code of the most recent apply_node run (None until apply_node has
+    # actually run once -- a step with no cataloged recipe skips apply_node
+    # entirely, going plan -> ai_fix directly, so this stays None for it).
+    # route_after_apply (spec: docs/superpowers/specs/2026-08-09-stage1-
+    # apply-verify-integrity-design.md) uses this to skip verify entirely
+    # when the recipe itself never actually applied.
+    apply_returncode: int | None
+
     last_build_output: str
     status: Stage1Status
 

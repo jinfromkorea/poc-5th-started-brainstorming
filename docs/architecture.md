@@ -167,8 +167,9 @@ stateDiagram-v2
     plan --> apply: 다음 레시피 있음
     plan --> ai_fix: 카탈로그에 알려진 레시피 없음
     plan --> [*]: 이미 목표 버전
-    apply --> verify: OpenRewrite 레시피 실행
-    verify --> [*]: mvn compile 성공
+    apply --> verify: 레시피 적용 성공(exit=0)
+    apply --> ai_fix: 레시피 적용 자체가 실패(exit≠0)
+    verify --> [*]: mvn test-compile 성공
     verify --> ai_fix: 실패, 재시도 여유 있음
     verify --> handoff: 실패, 재시도 한도 소진
     ai_fix --> verify: 변경 파일 수 ≤ 한도
@@ -176,8 +177,8 @@ stateDiagram-v2
     handoff --> [*]
 ```
 
-- `apply`: `mvnrewrite/rewrite_client.run_openrewrite_recipes`가 `org.openrewrite.maven:rewrite-maven-plugin:RELEASE`를 좌표로 직접 호출한다(대상 프로젝트의 `pom.xml`에 플러그인 설정을 주입하지 않음 — 주입하면 그 변경 자체가 diff에 오염되어 매번 되돌려야 하는 문제가 생기기 때문). 카탈로그에 레시피가 없는 스텝은 이 노드를 건너뛰고 곧장 `ai_fix`로 간다 — 적용할 레시피 자체가 없기 때문.
-- `verify`: `mvn compile`.
+- `apply`: `mvnrewrite/rewrite_client.run_openrewrite_recipes`가 `org.openrewrite.maven:rewrite-maven-plugin:RELEASE`를 좌표로 직접 호출한다(대상 프로젝트의 `pom.xml`에 플러그인 설정을 주입하지 않음 — 주입하면 그 변경 자체가 diff에 오염되어 매번 되돌려야 하는 문제가 생기기 때문). 카탈로그에 레시피가 없는 스텝은 이 노드를 건너뛰고 곧장 `ai_fix`로 간다 — 적용할 레시피 자체가 없기 때문. **레시피 실행 자체가 실패(exit≠0)하면 `verify`를 거치지 않고 곧장 `ai_fix`로 간다**(2026-08-09, job #11 계기) — `verify`로 보냈다가는 아무것도 안 바뀐 채 우연히 컴파일이 통과해 조용히 "성공"으로 끝나버리거나, 원래 있던 실패 원인이 `verify`의 결과로 덮어써져 사라질 수 있기 때문. 자세한 배경은 `docs/superpowers/specs/2026-08-09-stage1-apply-verify-integrity-design.md` 참고.
+- `verify`: `mvn test-compile`(운영+테스트 소스 컴파일, 테스트 실행은 안 함) — 원래 `mvn compile`(운영 소스만)이었으나, 레시피가 테스트 코드만 깨뜨리고 넘어가는 걸 못 잡는 문제가 있어 확장(같은 계기). 테스트를 실제로 돌리진 않아 부작용(예: 실제 메일 전송을 시도하는 테스트) 위험은 없다.
 - `ai_fix`: `langchain.agents.create_agent` + `ChatOpenAI`(`orchestration/llm.get_chat_model`) + `orchestration/tools.build_tools`가 제공하는 `read_file`/`edit_file`/`run_build`/`run_recipe`/`list_available_recipes` 툴로 스스로 고친다. 두 가지 경우에 호출된다: (1) 레시피 적용 후 `verify`가 실패했을 때, 빌드 에러를 고쳐 달라고 요청 — 기존 동작. (2) 레시피가 아예 없을 때(`plan`에서 곧장 옴, 첫 시도), 목표 버전까지 직접 올려 달라고 요청 — 이후 재시도는 (1)과 동일하게 "아직도 컴파일이 안 된다"는 빌드 출력을 주고 계속 고치게 한다. 모든 파일 접근은 `work_dir` 밖으로 나가지 못하도록 경로를 검증한다(`_safe_path`). 호출 하나하나는 `orchestration/callbacks.LocalLLMLogger`가 `output/logs/{stage}/llm/*.json`으로 로컬에도 남긴다(LangSmith 트레이싱과 별도, LangSmith 접근 권한이 없는 사람도 job 폴더만으로 무슨 일이 있었는지 볼 수 있게).
 - 재시도 상한 `COMPILE_FIX_MAX_ATTEMPTS`(기본 2), 자동 적용 파일 수 상한 `COMPILE_FIX_AUTO_APPLY_MAX_FILES`(기본 3) — 두 값 모두 `.env`로 조정. 레시피 없이 처음부터 AI가 버전을 올리는 스텝은 파일 수 상한만 별도로 `COMPILE_FIX_AUTO_APPLY_MAX_FILES_NO_RECIPE`(기본 20)를 쓴다 — 컴파일 에러 하나 고치는 것보다 자연스럽게 훨씬 많은 파일(설정 클래스, import, deprecated API 사용처...)을 건드리기 때문.
 

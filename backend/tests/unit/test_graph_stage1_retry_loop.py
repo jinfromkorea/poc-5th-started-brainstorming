@@ -42,7 +42,7 @@ async def test_retries_until_build_succeeds(monkeypatch, settings, tmp_path):
     async def fake_run_openrewrite_recipes(*args, **kwargs):
         return SubprocessResult(returncode=0, output="recipe applied", log_path=None)
 
-    monkeypatch.setattr("app.orchestration.graph_stage1.mvn_compile", fake_mvn_compile)
+    monkeypatch.setattr("app.orchestration.graph_stage1.mvn_test_compile", fake_mvn_compile)
     monkeypatch.setattr("app.orchestration.graph_stage1.run_openrewrite_recipes", fake_run_openrewrite_recipes)
     monkeypatch.setattr("app.orchestration.graph_stage1.changed_file_count", lambda work_dir, settings_: 1)
     monkeypatch.setattr("app.orchestration.graph_stage1.commit_checkpoint", lambda *a, **k: "deadbeef")
@@ -68,7 +68,7 @@ async def test_exhausts_retries_and_needs_handoff(monkeypatch, settings, tmp_pat
     async def fake_run_openrewrite_recipes(*args, **kwargs):
         return SubprocessResult(returncode=0, output="recipe applied", log_path=None)
 
-    monkeypatch.setattr("app.orchestration.graph_stage1.mvn_compile", always_fails)
+    monkeypatch.setattr("app.orchestration.graph_stage1.mvn_test_compile", always_fails)
     monkeypatch.setattr("app.orchestration.graph_stage1.run_openrewrite_recipes", fake_run_openrewrite_recipes)
     monkeypatch.setattr("app.orchestration.graph_stage1.changed_file_count", lambda work_dir, settings_: 1)
     monkeypatch.setattr("app.orchestration.graph_stage1.commit_checkpoint", lambda *a, **k: "deadbeef")
@@ -102,7 +102,7 @@ async def test_auto_apply_file_count_gate_short_circuits_to_handoff(monkeypatch,
         verify_calls["n"] += 1
         return SubprocessResult(returncode=1, output="still broken", log_path=None)
 
-    monkeypatch.setattr("app.orchestration.graph_stage1.mvn_compile", counting_mvn_compile)
+    monkeypatch.setattr("app.orchestration.graph_stage1.mvn_test_compile", counting_mvn_compile)
     monkeypatch.setattr("app.orchestration.graph_stage1.run_openrewrite_recipes", fake_run_openrewrite_recipes)
     monkeypatch.setattr("app.orchestration.graph_stage1.changed_file_count", lambda work_dir, settings_: 999)
     monkeypatch.setattr("app.orchestration.graph_stage1.commit_checkpoint", lambda *a, **k: "deadbeef")
@@ -119,3 +119,102 @@ async def test_auto_apply_file_count_gate_short_circuits_to_handoff(monkeypatch,
     assert result["status"] == "needs_handoff"
     assert result["attempt"] == 1  # ai_fix ran exactly once before the gate stopped it
     assert verify_calls["n"] == 1  # only the initial verify (the one that triggered ai_fix); no re-verify after the gate trips
+
+
+async def test_apply_failure_skips_verify_and_goes_straight_to_ai_fix(monkeypatch, settings, tmp_path):
+    """route_after_apply (spec: docs/superpowers/specs/2026-08-09-stage1-
+    apply-verify-integrity-design.md): a recipe that fails to apply
+    (exit != 0) must route straight to ai_fix, not through verify. Proven
+    here by making verify unconditionally report success -- under the old
+    fixed apply->verify edge, that would end the graph with status=success
+    and attempt still 0 (ai_fix never even called), silently ignoring that
+    the recipe never actually applied. Under the fix, ai_fix runs first
+    (attempt becomes 1), and only then does verify get a chance to run."""
+    verify_calls = {"n": 0}
+
+    async def succeeding_verify(work_dir, settings_, log_path=None, on_line=None):
+        verify_calls["n"] += 1
+        return SubprocessResult(returncode=0, output="build output", log_path=None)
+
+    async def failing_apply(*args, **kwargs):
+        return SubprocessResult(returncode=1, output="mvn rewrite:run: BUILD FAILURE", log_path=None)
+
+    monkeypatch.setattr("app.orchestration.graph_stage1.mvn_test_compile", succeeding_verify)
+    monkeypatch.setattr("app.orchestration.graph_stage1.run_openrewrite_recipes", failing_apply)
+    monkeypatch.setattr("app.orchestration.graph_stage1.changed_file_count", lambda work_dir, settings_: 1)
+    monkeypatch.setattr("app.orchestration.graph_stage1.commit_checkpoint", lambda *a, **k: "deadbeef")
+    monkeypatch.setattr("app.orchestration.graph_stage1.create_agent", lambda *a, **k: _fake_agent())
+
+    result = await run_stage1_single_step(
+        job_id="job-apply-fail",
+        work_dir=tmp_path,
+        detected_spring_boot="2.7.18",
+        target_spring_boot="4.1",
+        settings=settings,
+    )
+
+    assert result["status"] == "success"
+    assert result["attempt"] == 1  # ai_fix DID run -- the apply failure wasn't silently swallowed
+    assert verify_calls["n"] == 1  # verify only ran once, after ai_fix -- not as a direct consequence of the failed apply
+
+
+async def test_apply_failure_output_reaches_ai_fix_prompt(monkeypatch, settings, tmp_path):
+    """The recipe's own failure output must survive into ai_fix's prompt --
+    if apply always flowed through verify first (the old behavior), verify
+    would overwrite last_build_output with its own (here: unrelated, since
+    nothing was actually broken) result and bury the real failure reason."""
+    captured_agent = _fake_agent()
+
+    async def failing_apply(*args, **kwargs):
+        return SubprocessResult(returncode=1, output="mvn rewrite:run: BUILD FAILURE reason XYZ", log_path=None)
+
+    async def succeeding_verify(work_dir, settings_, log_path=None, on_line=None):
+        return SubprocessResult(returncode=0, output="unrelated verify output", log_path=None)
+
+    monkeypatch.setattr("app.orchestration.graph_stage1.mvn_test_compile", succeeding_verify)
+    monkeypatch.setattr("app.orchestration.graph_stage1.run_openrewrite_recipes", failing_apply)
+    monkeypatch.setattr("app.orchestration.graph_stage1.changed_file_count", lambda work_dir, settings_: 1)
+    monkeypatch.setattr("app.orchestration.graph_stage1.commit_checkpoint", lambda *a, **k: "deadbeef")
+    monkeypatch.setattr("app.orchestration.graph_stage1.create_agent", lambda *a, **k: captured_agent)
+
+    await run_stage1_single_step(
+        job_id="job-apply-fail-prompt",
+        work_dir=tmp_path,
+        detected_spring_boot="2.7.18",
+        target_spring_boot="4.1",
+        settings=settings,
+    )
+
+    prompt = captured_agent.ainvoke.call_args.args[0]["messages"][0].content
+    assert "mvn rewrite:run: BUILD FAILURE reason XYZ" in prompt
+    assert "[openrewrite exit=1]" in prompt
+    assert "unrelated verify output" not in prompt  # verify never ran before this ai_fix call
+
+
+async def test_apply_success_still_flows_through_verify(monkeypatch, settings, tmp_path):
+    """Regression check: a successful apply must still go through verify as
+    before -- route_after_apply only changes behavior on failure."""
+    verify_calls = {"n": 0}
+
+    async def counting_verify(work_dir, settings_, log_path=None, on_line=None):
+        verify_calls["n"] += 1
+        return SubprocessResult(returncode=0, output="ok", log_path=None)
+
+    async def succeeding_apply(*args, **kwargs):
+        return SubprocessResult(returncode=0, output="recipe applied", log_path=None)
+
+    monkeypatch.setattr("app.orchestration.graph_stage1.mvn_test_compile", counting_verify)
+    monkeypatch.setattr("app.orchestration.graph_stage1.run_openrewrite_recipes", succeeding_apply)
+    monkeypatch.setattr("app.orchestration.graph_stage1.commit_checkpoint", lambda *a, **k: "deadbeef")
+
+    result = await run_stage1_single_step(
+        job_id="job-apply-success",
+        work_dir=tmp_path,
+        detected_spring_boot="2.7.18",
+        target_spring_boot="4.1",
+        settings=settings,
+    )
+
+    assert result["status"] == "success"
+    assert result["attempt"] == 0  # ai_fix never needed -- apply succeeded, verify passed on the first try
+    assert verify_calls["n"] == 1

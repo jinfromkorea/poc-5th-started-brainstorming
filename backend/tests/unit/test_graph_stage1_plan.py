@@ -72,7 +72,7 @@ async def test_graph_routes_to_ai_fix_when_no_known_recipe(monkeypatch, settings
     async def always_succeeds(*args, **kwargs):
         return SubprocessResult(returncode=0, output="ok", log_path=None)
 
-    monkeypatch.setattr("app.orchestration.graph_stage1.mvn_compile", always_succeeds)
+    monkeypatch.setattr("app.orchestration.graph_stage1.mvn_test_compile", always_succeeds)
     monkeypatch.setattr("app.orchestration.graph_stage1.changed_file_count", lambda work_dir, settings_: 1)
     monkeypatch.setattr("app.orchestration.graph_stage1.create_agent", lambda *a, **k: _fake_agent())
 
@@ -98,7 +98,7 @@ async def test_graph_no_recipe_step_tolerates_more_changed_files_than_the_normal
     async def always_succeeds(*args, **kwargs):
         return SubprocessResult(returncode=0, output="ok", log_path=None)
 
-    monkeypatch.setattr("app.orchestration.graph_stage1.mvn_compile", always_succeeds)
+    monkeypatch.setattr("app.orchestration.graph_stage1.mvn_test_compile", always_succeeds)
     monkeypatch.setattr("app.orchestration.graph_stage1.changed_file_count", lambda work_dir, settings_: 4)
     monkeypatch.setattr("app.orchestration.graph_stage1.create_agent", lambda *a, **k: _fake_agent())
 
@@ -120,7 +120,7 @@ async def test_graph_needs_handoff_when_ai_bridge_never_compiles(monkeypatch, se
     async def always_fails(*args, **kwargs):
         return SubprocessResult(returncode=1, output="still broken", log_path=None)
 
-    monkeypatch.setattr("app.orchestration.graph_stage1.mvn_compile", always_fails)
+    monkeypatch.setattr("app.orchestration.graph_stage1.mvn_test_compile", always_fails)
     monkeypatch.setattr("app.orchestration.graph_stage1.changed_file_count", lambda work_dir, settings_: 1)
     monkeypatch.setattr("app.orchestration.graph_stage1.create_agent", lambda *a, **k: _fake_agent())
 

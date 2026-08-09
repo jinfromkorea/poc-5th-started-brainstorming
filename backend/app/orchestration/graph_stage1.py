@@ -1,7 +1,9 @@
 """Stage 1 self-verification loop (spec: "자가검증 루프", "AI 오케스트레이션 +
 OpenRewrite 실행"). Phase 3 scope -- a single step:
 
-    plan -> (gap? known recipe?) -> apply (OpenRewrite) -> verify (mvn compile)
+    plan -> (gap? known recipe?) -> apply (OpenRewrite)
+         -> recipe itself failed (exit != 0)? -> ai_fix directly
+         -> else -> verify (mvn test-compile)
          -> on failure, bounded AI-fix retries (COMPILE_FIX_MAX_ATTEMPTS)
          -> auto-apply file-count gate (COMPILE_FIX_AUTO_APPLY_MAX_FILES)
          -> success | needs_handoff
@@ -21,7 +23,7 @@ from langgraph.graph import END, START, StateGraph
 
 from app.checkpoint.git_repo import changed_file_count, commit_checkpoint
 from app.config import Settings
-from app.mvnrewrite.mvn_client import mvn_compile
+from app.mvnrewrite.mvn_client import mvn_test_compile
 from app.mvnrewrite.recipe_catalog import RecipeCatalog, RecipeStep
 from app.mvnrewrite.rewrite_client import run_openrewrite_recipes
 from app.mvnrewrite.subprocess_runner import build_log_path
@@ -114,13 +116,26 @@ def build_stage1_graph(settings: Settings, on_log: LogFn = noop_log):
         commit_checkpoint(work_dir, settings, f"checkpoint: applied recipe {state['recipe']}")
         outcome = "완료" if result.returncode == 0 else "실패"
         await on_log(f"  OpenRewrite 레시피 적용 {outcome} (exit={result.returncode}, {elapsed:.1f}s)")
-        return {"last_build_output": f"[openrewrite exit={result.returncode}]\n{result.output}"}
+        return {
+            "apply_returncode": result.returncode,
+            "last_build_output": f"[openrewrite exit={result.returncode}]\n{result.output}",
+        }
+
+    def route_after_apply(state: Stage1State) -> str:
+        # The recipe itself never actually applied -- verify would only
+        # either wrongly report success (nothing changed, but nothing was
+        # broken either) or, if something upstream was already broken,
+        # overwrite last_build_output with an unrelated result and bury the
+        # real failure reason. Go straight to ai_fix with the recipe's own
+        # failure output intact (spec: docs/superpowers/specs/2026-08-09-
+        # stage1-apply-verify-integrity-design.md).
+        return "verify" if state["apply_returncode"] == 0 else "ai_fix"
 
     async def verify_node(state: Stage1State) -> dict:
         work_dir = Path(state["work_dir"])
         output_dir = work_dir.parent / "output"
-        log_path = build_log_path(output_dir, "stage1", "mvn-compile")
-        result = await mvn_compile(work_dir, settings, log_path=log_path)
+        log_path = build_log_path(output_dir, "stage1", "mvn-test-compile")
+        result = await mvn_test_compile(work_dir, settings, log_path=log_path)
         await on_log(f"  컴파일 검증: {'통과' if result.returncode == 0 else '실패'}")
         if result.returncode == 0:
             return {"status": "success", "last_build_output": result.output}
@@ -189,7 +204,7 @@ def build_stage1_graph(settings: Settings, on_log: LogFn = noop_log):
 
     graph.add_edge(START, "plan")
     graph.add_conditional_edges("plan", route_after_plan, {"apply": "apply", "ai_fix": "ai_fix", END: END})
-    graph.add_edge("apply", "verify")
+    graph.add_conditional_edges("apply", route_after_apply, {"verify": "verify", "ai_fix": "ai_fix"})
     graph.add_conditional_edges("verify", route_after_verify, {END: END, "ai_fix": "ai_fix", "handoff": "handoff"})
     graph.add_conditional_edges("ai_fix", route_after_ai_fix, {"verify": "verify", "handoff": "handoff"})
     graph.add_edge("handoff", END)
@@ -215,6 +230,7 @@ def initial_state(
         attempt=0,
         max_attempts=settings.compile_fix_max_attempts,
         max_auto_apply_files=settings.compile_fix_auto_apply_max_files,
+        apply_returncode=None,
         last_build_output="",
         status="running",
         messages=[],
@@ -253,6 +269,7 @@ def initial_state_for_step(job_id: str, work_dir: Path, step: PlanStep, settings
             if step.recipe is None
             else settings.compile_fix_auto_apply_max_files
         ),
+        apply_returncode=None,
         last_build_output="",
         status="running",
         messages=[],

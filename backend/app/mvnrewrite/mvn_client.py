@@ -23,6 +23,18 @@ async def mvn_compile(
     return await run_subprocess([*_BATCH, "compile"], work_dir, settings, log_path=log_path, on_line=on_line)
 
 
+async def mvn_test_compile(
+    work_dir: Path, settings: Settings, log_path: Path | None = None, on_line: Callable[[str], None] | None = None
+) -> SubprocessResult:
+    """Compiles both main AND test sources -- unlike mvn_compile above,
+    which only compiles src/main -- without actually running the tests
+    (spec: docs/superpowers/specs/2026-08-09-stage1-apply-verify-integrity-
+    design.md). Used where a build-health check needs to catch a broken
+    test source file (e.g. a stale import an OpenRewrite recipe didn't
+    relocate) without the side effects of actually executing tests."""
+    return await run_subprocess([*_BATCH, "test-compile"], work_dir, settings, log_path=log_path, on_line=on_line)
+
+
 async def mvn_test(
     work_dir: Path, settings: Settings, log_path: Path | None = None, on_line: Callable[[str], None] | None = None
 ) -> SubprocessResult:

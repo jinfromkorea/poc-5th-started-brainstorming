@@ -54,7 +54,7 @@ async def test_all_steps_succeed_checkpoints_each_one(monkeypatch, settings, wor
     async def always_succeeds(*args, **kwargs):
         return SubprocessResult(returncode=0, output="ok", log_path=None)
 
-    monkeypatch.setattr("app.orchestration.graph_stage1.mvn_compile", always_succeeds)
+    monkeypatch.setattr("app.orchestration.graph_stage1.mvn_test_compile", always_succeeds)
     monkeypatch.setattr("app.orchestration.graph_stage1.run_openrewrite_recipes", always_succeeds)
     monkeypatch.setattr("app.orchestration.graph_stage1.create_agent", lambda *a, **k: _fake_agent())
 
@@ -96,7 +96,7 @@ async def test_middle_step_fails_rolls_back_and_stops(monkeypatch, settings, wor
             returncode=0 if openrewrite_calls["n"] == 1 else 1, output="build broke here", log_path=None
         )
 
-    monkeypatch.setattr("app.orchestration.graph_stage1.mvn_compile", compile_fails_on_second_step)
+    monkeypatch.setattr("app.orchestration.graph_stage1.mvn_test_compile", compile_fails_on_second_step)
     monkeypatch.setattr("app.orchestration.graph_stage1.run_openrewrite_recipes", counting_openrewrite)
     monkeypatch.setattr("app.orchestration.graph_stage1.changed_file_count", lambda work_dir_, settings_: 1)
     monkeypatch.setattr("app.orchestration.graph_stage1.create_agent", lambda *a, **k: _fake_agent())
@@ -139,7 +139,7 @@ async def test_catalog_gap_ai_bridges_it_successfully(monkeypatch, settings, wor
     async def always_succeeds(*args, **kwargs):
         return SubprocessResult(returncode=0, output="ok", log_path=None)
 
-    monkeypatch.setattr("app.orchestration.graph_stage1.mvn_compile", always_succeeds)
+    monkeypatch.setattr("app.orchestration.graph_stage1.mvn_test_compile", always_succeeds)
     monkeypatch.setattr("app.orchestration.graph_stage1.create_agent", lambda *a, **k: _fake_agent())
 
     baseline_sha = current_head(work_dir, settings)
@@ -170,7 +170,7 @@ async def test_catalog_gap_ai_bridge_fails_promotes_to_needs_handoff(monkeypatch
     async def always_fails(*args, **kwargs):
         return SubprocessResult(returncode=1, output="still broken", log_path=None)
 
-    monkeypatch.setattr("app.orchestration.graph_stage1.mvn_compile", always_fails)
+    monkeypatch.setattr("app.orchestration.graph_stage1.mvn_test_compile", always_fails)
     monkeypatch.setattr("app.orchestration.graph_stage1.changed_file_count", lambda work_dir_, settings_: 1)
     monkeypatch.setattr("app.orchestration.graph_stage1.create_agent", lambda *a, **k: _fake_agent())
 
