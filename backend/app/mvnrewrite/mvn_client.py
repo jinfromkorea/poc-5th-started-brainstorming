@@ -54,6 +54,30 @@ async def mvn_versions_set(
     )
 
 
+async def mvn_versions_set_property(
+    work_dir: Path,
+    property_name: str,
+    new_version: str,
+    settings: Settings,
+    log_path: Path | None = None,
+    on_line: Callable[[str], None] | None = None,
+) -> SubprocessResult:
+    """versions:set-property -- bumps a single property's value directly.
+    versions:set (above) reactor-propagates each module's own <version>, but
+    never follows a property indirection like a dependencyManagement entry
+    that references the reactor's own modules as a BOM/library via
+    ${some.version} (e.g. ace-parent's ${ace.version}) -- that's left stale
+    unless bumped separately. Called from versioning/artifact_version.py's
+    apply_output_version, once per such property found."""
+    return await run_subprocess(
+        [*_BATCH, "versions:set-property", f"-Dproperty={property_name}", f"-DnewVersion={new_version}"],
+        work_dir,
+        settings,
+        log_path=log_path,
+        on_line=on_line,
+    )
+
+
 async def mvn_effective_pom(
     work_dir: Path,
     output_path: Path,
