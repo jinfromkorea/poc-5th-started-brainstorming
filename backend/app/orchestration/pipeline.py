@@ -23,7 +23,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.checkpoint.git_repo import diff_since, resolve_ingest_baseline, resolve_stage_baseline
+from app.checkpoint.git_repo import current_head, diff_since, resolve_ingest_baseline
 from app.config import Settings
 from app.ingest.errors import IngestError
 from app.ingest.workspace import SourceSpec, ingest
@@ -201,6 +201,14 @@ async def run_pipeline(
             await emit("inventory", asdict(detected))
 
             stage1_result = await run_stage1_migration(job_id, work_dir, detected, baseline, settings, on_log=log)
+            # Keep baseline in sync with whatever Stage 1 actually left in
+            # work/ (spec: docs/superpowers/specs/2026-08-09-stage2-
+            # baseline-drift-design.md) -- regardless of no_gap/success/
+            # needs_handoff, this HEAD is the correct floor for Stage 2's
+            # own rollback to protect. Without this, Stage 2's first failed
+            # CVE would reset all the way back to before Stage 1 ran,
+            # wiping out every checkpoint Stage 1 already committed.
+            baseline = current_head(work_dir, settings)
             report_sections.append(stage1_result.report)
             await log(f"1단계 종료: {stage1_result.status}")
 
@@ -260,21 +268,23 @@ async def run_pipeline(
 async def run_pipeline_resume_stage2(job_id: str, settings: Settings, session_factory: sessionmaker[Session]) -> None:
     """Scheduled by POST /jobs/{id}/proceed for a job sitting at
     status="awaiting_approval". work_dir/output_dir are re-derived from
-    job_id alone (paths are always {JOBS_DATA_DIR}/{job_id}/{work,output});
-    the baseline commit(s) run_pipeline held as local variables are recovered
-    from git history via resolve_ingest_baseline/resolve_stage_baseline --
-    no new DB column needed."""
+    job_id alone (paths are always {JOBS_DATA_DIR}/{job_id}/{work,output}).
+    ingest_baseline (the true first commit, for the final diff) is recovered
+    from git history via resolve_ingest_baseline -- no new DB column needed.
+    stage_baseline (Stage 2's own rollback floor) doesn't need reconstructing
+    at all: work/ has sat untouched since Stage 1 paused here, so its
+    current HEAD already *is* the correct value (spec: docs/superpowers/
+    specs/2026-08-09-stage2-baseline-drift-design.md)."""
     emit, log = make_emit_log(session_factory, job_id)
 
     with session_factory() as session:
         job = session.get(Job, job_id)
         prior_report = job.report_markdown or ""
-        output_version = job.output_version
 
     work_dir = settings.jobs_dir / job_id / "work"
     output_dir = settings.jobs_dir / job_id / "output"
     handoff_dir = output_dir / "handoff"
-    stage_baseline = resolve_stage_baseline(work_dir, settings, output_version)
+    stage_baseline = current_head(work_dir, settings)
     ingest_baseline = resolve_ingest_baseline(work_dir, settings)
 
     await set_job_status(session_factory, job_id, "running")

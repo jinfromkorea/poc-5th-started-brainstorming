@@ -166,17 +166,6 @@ def resolve_ingest_baseline(work_dir: Path, settings: Settings) -> str:
     return _ordered_shas(work_dir, settings)[0]
 
 
-def resolve_stage_baseline(work_dir: Path, settings: Settings, output_version: str | None) -> str:
-    """Reconstructs the baseline commit Stage 1/2's own rollback logic treats
-    as its protected floor (run_pipeline's `baseline` local variable after
-    its optional reassignment by apply_output_version): the 2nd commit if
-    output_version was requested (the version-set checkpoint), else the same
-    as resolve_ingest_baseline. Relies on run_pipeline's fixed commit order
-    (ingest baseline -> [output_version checkpoint] -> Stage 1 steps...)."""
-    shas = _ordered_shas(work_dir, settings)
-    return shas[1] if output_version and len(shas) > 1 else shas[0]
-
-
 def log_since(work_dir: Path, settings: Settings, baseline_sha: str) -> str:
     """One-line-per-checkpoint history since baseline -- a quick "what
     happened, in order" summary for the report, independent of the full diff."""

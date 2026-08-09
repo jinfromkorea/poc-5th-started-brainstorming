@@ -1,6 +1,6 @@
-"""resolve_ingest_baseline / resolve_stage_baseline -- reconstructing, from
-git history alone, the baseline sha(s) that run_pipeline's local variables
-held before a job paused at needs_handoff (see orchestration/pipeline.py's
+"""resolve_ingest_baseline -- reconstructing, from git history alone, the
+true first commit ever made in work_dir (used for the final diff when
+resuming Stage 2 after a HITL approval pause, see orchestration/pipeline.py's
 run_pipeline_resume_stage2). No other test file exercises checkpoint/git_repo.py
 directly."""
 
@@ -12,7 +12,6 @@ from app.checkpoint.git_repo import (
     diff_since,
     git_init_and_baseline_commit,
     resolve_ingest_baseline,
-    resolve_stage_baseline,
 )
 from app.config import Settings
 
@@ -38,20 +37,14 @@ def test_baseline_commit_adds_versions_backup_to_gitignore(tmp_path):
     assert "versionsBackup" not in diff_since(work_dir, settings, baseline_sha)
 
 
-def test_resolve_baselines_without_output_version(tmp_path):
-    settings = _settings()
-    work_dir = tmp_path / "work"
-    work_dir.mkdir()
-    (work_dir / "pom.xml").write_text("<project/>")
-    ingest_sha = git_init_and_baseline_commit(work_dir, settings)
-
-    commit_checkpoint(work_dir, settings, "checkpoint: some stage1 step")
-
-    assert resolve_ingest_baseline(work_dir, settings) == ingest_sha
-    assert resolve_stage_baseline(work_dir, settings, output_version=None) == ingest_sha
-
-
-def test_resolve_baselines_with_output_version(tmp_path):
+def test_resolve_ingest_baseline_ignores_later_commits(tmp_path):
+    """resolve_ingest_baseline must always point at the true first commit,
+    no matter how many more checkpoints (output version, Stage 1 steps...)
+    pile up on top -- it's used for the *final* diff, spanning the whole
+    job, not any particular stage's rollback floor (that's current_head
+    directly now, see docs/superpowers/specs/2026-08-09-stage2-baseline-
+    drift-design.md -- resolve_stage_baseline used to reconstruct that from
+    a wrong assumption and has been removed)."""
     settings = _settings()
     work_dir = tmp_path / "work"
     work_dir.mkdir()
@@ -59,9 +52,8 @@ def test_resolve_baselines_with_output_version(tmp_path):
     ingest_sha = git_init_and_baseline_commit(work_dir, settings)
 
     version_sha = commit_checkpoint(work_dir, settings, "checkpoint: set artifact version to 1.0.0")
-    commit_checkpoint(work_dir, settings, "checkpoint: some stage1 step")
+    stage1_sha = commit_checkpoint(work_dir, settings, "checkpoint: some stage1 step")
 
     assert resolve_ingest_baseline(work_dir, settings) == ingest_sha
-    assert resolve_stage_baseline(work_dir, settings, output_version="1.0.0") == version_sha
-    assert version_sha != ingest_sha
-    assert current_head(work_dir, settings) not in (ingest_sha, version_sha)
+    assert current_head(work_dir, settings) == stage1_sha
+    assert stage1_sha not in (ingest_sha, version_sha)  # genuinely a 3rd, later commit

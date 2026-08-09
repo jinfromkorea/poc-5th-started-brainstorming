@@ -9,10 +9,11 @@ itself, not the underlying mvn/AI/scan mechanics.
 from __future__ import annotations
 
 import asyncio
+import subprocess
 
 import pytest
 
-from app.checkpoint.git_repo import git_init_and_baseline_commit
+from app.checkpoint.git_repo import commit_checkpoint, git_init_and_baseline_commit, reset_to_checkpoint
 from app.config import Settings
 from app.ingest.maven_detect import MavenDetectionResult
 from app.ingest.workspace import GitSourceSpec, IngestResult, WorkspacePaths, ZipSourceSpec
@@ -53,15 +54,28 @@ def _create_job(db, job_id: str) -> None:
         session.commit()
 
 
-def _fake_ingest_result(job_id: str, paths: WorkspacePaths) -> IngestResult:
+def _fake_ingest_result(job_id: str, paths: WorkspacePaths, baseline_commit: str = "a" * 40) -> IngestResult:
     detection = MavenDetectionResult(root_pom=paths.source / "pom.xml", packaging="pom", is_multi_module=False, modules=[])
-    return IngestResult(job_id=job_id, paths=paths, detection=detection, baseline_commit="a" * 40)
+    return IngestResult(job_id=job_id, paths=paths, detection=detection, baseline_commit=baseline_commit)
+
+
+def _commit_subjects(work_dir) -> str:
+    """Plain `git log` subjects -- deliberately not going through
+    git_repo.py's own helpers, so this check doesn't share any code path
+    with what it's verifying."""
+    return subprocess.run(
+        ["git", "log", "--format=%s"], cwd=work_dir, capture_output=True, text=True, check=True
+    ).stdout
 
 
 async def test_stage1_only_success_writes_report_and_diff(monkeypatch, settings, db, job_paths):
     _create_job(db, "job-1")
+    ingest_sha = git_init_and_baseline_commit(job_paths.work, settings)
 
-    monkeypatch.setattr("app.orchestration.pipeline.ingest", lambda job_id, spec, settings_: _fake_ingest_result(job_id, job_paths))
+    monkeypatch.setattr(
+        "app.orchestration.pipeline.ingest",
+        lambda job_id, spec, settings_: _fake_ingest_result(job_id, job_paths, baseline_commit=ingest_sha),
+    )
     monkeypatch.setattr("app.orchestration.pipeline.mvn_effective_pom", _async_noop_writes_file)
     monkeypatch.setattr(
         "app.orchestration.pipeline.extract_versions",
@@ -145,8 +159,12 @@ async def test_stage1_only_success_writes_report_and_diff(monkeypatch, settings,
 
 async def test_stage1_needs_handoff_writes_guide_file(monkeypatch, settings, db, job_paths):
     _create_job(db, "job-2")
+    ingest_sha = git_init_and_baseline_commit(job_paths.work, settings)
 
-    monkeypatch.setattr("app.orchestration.pipeline.ingest", lambda job_id, spec, settings_: _fake_ingest_result(job_id, job_paths))
+    monkeypatch.setattr(
+        "app.orchestration.pipeline.ingest",
+        lambda job_id, spec, settings_: _fake_ingest_result(job_id, job_paths, baseline_commit=ingest_sha),
+    )
     monkeypatch.setattr("app.orchestration.pipeline.mvn_effective_pom", _async_noop_writes_file)
     monkeypatch.setattr(
         "app.orchestration.pipeline.extract_versions",
@@ -249,8 +267,12 @@ async def test_stage2_only_with_vulnerabilities(monkeypatch, settings, db, job_p
 
 async def test_stage1_needs_handoff_with_stage2_requested_pauses_for_approval(monkeypatch, settings, db, job_paths):
     _create_job(db, "job-5")
+    ingest_sha = git_init_and_baseline_commit(job_paths.work, settings)
 
-    monkeypatch.setattr("app.orchestration.pipeline.ingest", lambda job_id, spec, settings_: _fake_ingest_result(job_id, job_paths))
+    monkeypatch.setattr(
+        "app.orchestration.pipeline.ingest",
+        lambda job_id, spec, settings_: _fake_ingest_result(job_id, job_paths, baseline_commit=ingest_sha),
+    )
     monkeypatch.setattr("app.orchestration.pipeline.mvn_effective_pom", _async_noop_writes_file)
     monkeypatch.setattr(
         "app.orchestration.pipeline.extract_versions",
@@ -366,6 +388,110 @@ async def test_run_pipeline_resume_stage2_completes_after_approval(monkeypatch, 
     report_text = (job_paths.output / "report.md").read_text(encoding="utf-8")
     assert "stage1 report" in report_text
     assert "stage2 report" in report_text
+
+
+async def test_stage1_success_commits_survive_a_failed_first_stage2_cve(monkeypatch, settings, db, job_paths):
+    """Regression test for job #14 (spec: docs/superpowers/specs/2026-08-09-
+    stage2-baseline-drift-design.md): Stage 1 commits several checkpoints and
+    fully succeeds, then Stage 2's first CVE fails. Before the fix, baseline
+    was never updated after Stage 1, so stage2_loop's reset_to_checkpoint
+    (called with last_good_sha still equal to that stale, pre-Stage-1 value)
+    would silently wipe out everything Stage 1 had already committed."""
+    _create_job(db, "job-14-repro")
+    ingest_sha = git_init_and_baseline_commit(job_paths.work, settings)
+
+    monkeypatch.setattr(
+        "app.orchestration.pipeline.ingest",
+        lambda job_id, spec, settings_: _fake_ingest_result(job_id, job_paths, baseline_commit=ingest_sha),
+    )
+    monkeypatch.setattr("app.orchestration.pipeline.mvn_effective_pom", _async_noop_writes_file)
+    monkeypatch.setattr(
+        "app.orchestration.pipeline.extract_versions",
+        lambda path: DetectedVersions(java_version="21", spring_boot_version="4.1.0", spring_cloud_version=None, spring_ai_version=None),
+    )
+
+    async def fake_scan(work_dir, output_dir, settings_):
+        return []
+
+    monkeypatch.setattr("app.orchestration.pipeline.run_combined_scan", fake_scan)
+
+    async def fake_stage1(job_id, work_dir, detected, baseline, settings_, on_log=None):
+        # Mirrors what multi_step.run_stage1_migration really does for each
+        # successful step: a real checkpoint commit per step.
+        commit_checkpoint(work_dir, settings_, "checkpoint: Spring Boot 3.5 -> 4.0")
+        commit_checkpoint(work_dir, settings_, "checkpoint: Spring AI 1.1.8 -> 2.0")
+        return MigrationRunResult(
+            plan=MigrationPlan(steps=[]), outcomes=[], status="success", final_diff="", report="# stage1 report\n성공", handoff_guide=None
+        )
+
+    monkeypatch.setattr("app.orchestration.pipeline.run_stage1_migration", fake_stage1)
+
+    async def fake_stage2_first_cve_fails(job_id, work_dir, vulns, baseline_commit, settings_, on_log=None):
+        # Mirrors exactly what stage2_loop.run_stage2_patches does when the
+        # very first CVE fails: last_good_sha is still whatever baseline it
+        # was handed (never updated by a successful CVE yet).
+        reset_to_checkpoint(work_dir, settings_, baseline_commit)
+        return Stage2RunResult(outcomes=[], final_diff="", report="# stage2 report\n실패")
+
+    monkeypatch.setattr("app.orchestration.pipeline.run_stage2_patches", fake_stage2_first_cve_fails)
+
+    await run_pipeline(
+        job_id="job-14-repro",
+        spec=ZipSourceSpec(zip_path=job_paths.root / "fake.zip"),
+        output_version=None,
+        run_stage1=True,
+        run_stage2=True,
+        settings=settings,
+        session_factory=db,
+    )
+
+    subjects = _commit_subjects(job_paths.work)
+    assert "Spring Boot 3.5 -> 4.0" in subjects
+    assert "Spring AI 1.1.8 -> 2.0" in subjects
+
+
+async def test_resume_stage2_after_partial_stage1_success_preserves_stage1_commits(monkeypatch, settings, db, job_paths):
+    """Same regression as above, but for the HITL-approval resume path
+    (run_pipeline_resume_stage2) -- Stage 1 succeeded on 2 steps before
+    getting stuck on a 3rd (hence awaiting_approval), and the resumed
+    Stage 2's first CVE fails."""
+    job_id = job_paths.root.name
+    settings.jobs_data_dir = str(job_paths.root.parent)
+
+    git_init_and_baseline_commit(job_paths.work, settings)
+    commit_checkpoint(job_paths.work, settings, "checkpoint: Spring Boot 3.5 -> 4.0")
+    commit_checkpoint(job_paths.work, settings, "checkpoint: Spring Boot 4.0 -> 4.1")
+
+    with db() as session:
+        session.add(
+            Job(
+                id=job_id,
+                source_type="zip",
+                source_ref="x.zip",
+                run_stage1=True,
+                run_stage2=True,
+                status="awaiting_approval",
+                report_markdown="# stage1 report\n일부 성공, 3번째 스텝에서 막힘",
+            )
+        )
+        session.commit()
+
+    async def fake_scan(work_dir, output_dir, settings_):
+        return []
+
+    monkeypatch.setattr("app.orchestration.pipeline.run_combined_scan", fake_scan)
+
+    async def fake_stage2_first_cve_fails(job_id, work_dir, vulns, baseline_commit, settings_, on_log=None):
+        reset_to_checkpoint(work_dir, settings_, baseline_commit)
+        return Stage2RunResult(outcomes=[], final_diff="", report="# stage2 report\n실패")
+
+    monkeypatch.setattr("app.orchestration.pipeline.run_stage2_patches", fake_stage2_first_cve_fails)
+
+    await run_pipeline_resume_stage2(job_id=job_id, settings=settings, session_factory=db)
+
+    subjects = _commit_subjects(job_paths.work)
+    assert "Spring Boot 3.5 -> 4.0" in subjects
+    assert "Spring Boot 4.0 -> 4.1" in subjects
 
 
 async def test_cancel_during_run_marks_job_cancelled_and_writes_marker(monkeypatch, settings, db, job_paths):
