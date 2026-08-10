@@ -80,6 +80,18 @@ async function loadJobs() {
     });
 
     const actionCell = document.createElement("td");
+    actionCell.className = "row-actions";
+
+    const detailLink = document.createElement("a");
+    detailLink.href = `job.html?job=${encodeURIComponent(job.job_id)}`;
+    detailLink.textContent = "상세";
+    actionCell.appendChild(detailLink);
+
+    const filesLink = document.createElement("a");
+    filesLink.href = `files.html?job=${encodeURIComponent(job.job_id)}`;
+    filesLink.textContent = "파일";
+    actionCell.appendChild(filesLink);
+
     const actionBtn = document.createElement("button");
     actionBtn.type = "button";
     actionBtn.className = "secondary";
@@ -97,6 +109,17 @@ async function loadJobs() {
   });
 }
 
-refreshJobsBtn.addEventListener("click", loadJobs);
+async function refreshJobs() {
+  refreshJobsBtn.disabled = true;
+  refreshJobsBtn.classList.add("spinning");
+  try {
+    await loadJobs();
+  } finally {
+    refreshJobsBtn.disabled = false;
+    refreshJobsBtn.classList.remove("spinning");
+  }
+}
+
+refreshJobsBtn.addEventListener("click", refreshJobs);
 
 loadJobs();

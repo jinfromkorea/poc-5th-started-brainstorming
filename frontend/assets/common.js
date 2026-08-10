@@ -10,7 +10,7 @@ function injectSettingsUI() {
   settingsBtn.type = "button";
   settingsBtn.id = "settings-btn";
   settingsBtn.className = "settings-btn";
-  settingsBtn.title = "연결 설정";
+  settingsBtn.title = "설정";
   settingsBtn.textContent = "⚙";
   document.querySelector("header").appendChild(settingsBtn);
 
@@ -18,8 +18,8 @@ function injectSettingsUI() {
   overlay.id = "settings-modal";
   overlay.className = "modal-overlay hidden";
   overlay.innerHTML = `
-    <div class="modal" role="dialog" aria-label="연결 설정">
-      <h2>연결 설정</h2>
+    <div class="modal" role="dialog" aria-label="설정">
+      <h2>설정</h2>
       <div class="field-row">
         <label for="api-base">API 서버 주소</label>
         <input id="api-base" type="text" placeholder="http://127.0.0.1:8010" />
@@ -31,7 +31,7 @@ function injectSettingsUI() {
       <h3 class="modal-section-heading">취약점 DB 캐시</h3>
       <div class="field-row">
         <span id="cache-status-text">불러오는 중...</span>
-        <button type="button" id="cache-refresh-btn" class="secondary" title="지금 갱신">⟳</button>
+        <button type="button" id="cache-refresh-btn" class="secondary icon-btn" title="지금 갱신">⟳</button>
       </div>
       <h3 class="modal-section-heading">LLM 모델</h3>
       <div class="field-row">

@@ -312,17 +312,17 @@ button.secondary:hover:not(:disabled) {
   flex: 1;
 }
 
-#cache-refresh-btn {
+.icon-btn {
   padding: 4px 10px;
   line-height: 1;
   font-size: 1rem;
 }
 
-#cache-refresh-btn.spinning {
-  animation: cache-spin 1s linear infinite;
+.icon-btn.spinning {
+  animation: icon-spin 1s linear infinite;
 }
 
-@keyframes cache-spin {
+@keyframes icon-spin {
   to {
     transform: rotate(360deg);
   }
@@ -484,6 +484,12 @@ td {
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 th {
