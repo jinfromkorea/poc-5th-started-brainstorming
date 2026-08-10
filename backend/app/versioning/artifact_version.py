@@ -81,3 +81,23 @@ async def apply_output_version(
             raise RuntimeError(f"versions:set-property failed for property {prop!r}: {prop_result.output}")
 
     return commit_checkpoint(work_dir, settings, f"checkpoint: set artifact version to {new_version}")
+
+
+_SNAPSHOT_SUFFIX = "-SNAPSHOT"
+
+
+def suggest_output_version(declared_version: str) -> str:
+    """Normalizes a raw pom.xml version (from ingest/maven_detect.py's
+    read_declared_version) into a release-ready suggestion for the
+    pre-submission output-version field: drops a -SNAPSHOT qualifier, pads
+    an incomplete MAJOR.MINOR into MAJOR.MINOR.0. Anything else (other
+    qualifiers, 4-part versions, non-numeric values) passes through
+    unchanged -- guessing wrong here is worse than not guessing (spec:
+    docs/superpowers/specs/2026-08-10-output-version-suggestion-design.md)."""
+    version = declared_version
+    if version.endswith(_SNAPSHOT_SUFFIX):
+        version = version[: -len(_SNAPSHOT_SUFFIX)]
+    parts = version.split(".")
+    if len(parts) == 2 and all(p.isdigit() for p in parts):
+        version = f"{version}.0"
+    return version

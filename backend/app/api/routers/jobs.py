@@ -7,15 +7,14 @@ GET /jobs/{id} polls status; GET /jobs/{id}/events streams progress via SSE
 
 from __future__ import annotations
 
-import os
 import shutil
-import stat
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sse_starlette.sse import EventSourceResponse
 
 from app.api.deps import require_api_token
+from app.checkpoint.git_repo import rmtree_clear_readonly
 from app.config import Settings, get_settings
 from app.ingest.workspace import GitSourceSpec, ZipSourceSpec
 from app.models.db import get_db_session, session_factory
@@ -26,14 +25,6 @@ from app.schemas.job import JobCreateResponse, JobStatusResponse
 from app.streaming.sse import stream_job_events
 
 router = APIRouter(prefix="/jobs", tags=["jobs"], dependencies=[Depends(require_api_token)])
-
-
-def _rmtree_clear_readonly(func, path, _exc_info) -> None:
-    """shutil.rmtree callback (see delete_job): git marks committed
-    .git/objects/** files read-only, which raises PermissionError on Windows
-    when os.unlink tries to remove them. Clear the flag and retry once."""
-    os.chmod(path, stat.S_IWRITE)
-    func(path)
 
 
 @router.post("", response_model=JobCreateResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -225,7 +216,7 @@ async def delete_job(
 
     job_dir = settings.jobs_dir / job_id
     if job_dir.exists():
-        shutil.rmtree(job_dir, onexc=_rmtree_clear_readonly)
+        shutil.rmtree(job_dir, onexc=rmtree_clear_readonly)
 
 
 @router.get("/{job_id}/events")

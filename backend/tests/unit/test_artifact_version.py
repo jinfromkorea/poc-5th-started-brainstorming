@@ -15,6 +15,7 @@ from app.versioning.artifact_version import (
     _project_group_id,
     _self_referencing_version_properties,
     apply_output_version,
+    suggest_output_version,
 )
 
 _NS = "http://maven.apache.org/POM/4.0.0"
@@ -104,6 +105,26 @@ def test_self_referencing_version_properties_empty_when_no_group_id(tmp_path):
     pom.write_text(f'<project xmlns="{_NS}"><artifactId>demo</artifactId></project>')
 
     assert _self_referencing_version_properties(pom) == set()
+
+
+def test_suggest_output_version_drops_snapshot_suffix():
+    assert suggest_output_version("1.2.3-SNAPSHOT") == "1.2.3"
+
+
+def test_suggest_output_version_pads_major_minor():
+    assert suggest_output_version("1.2") == "1.2.0"
+
+
+def test_suggest_output_version_leaves_full_semver_unchanged():
+    assert suggest_output_version("1.2.3") == "1.2.3"
+
+
+def test_suggest_output_version_leaves_other_qualifiers_unchanged():
+    assert suggest_output_version("1.2.3-RC1") == "1.2.3-RC1"
+
+
+def test_suggest_output_version_leaves_four_part_version_unchanged():
+    assert suggest_output_version("1.2.3.4") == "1.2.3.4"
 
 
 def _work_dir_with_pom(tmp_path, settings, pom_xml: str):

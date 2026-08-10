@@ -28,6 +28,7 @@
           <input id="git-url" type="text" placeholder="https://git.example.com/team/service.git" />
           <label for="git-ref">브랜치/태그 (선택)</label>
           <input id="git-ref" type="text" placeholder="main" />
+          <button type="button" id="check-version-btn" class="secondary">현재 버전 확인</button>
         </div>
 
         <div class="field-row hidden" id="zip-fields">
@@ -39,6 +40,7 @@
           <label for="output-version">출력 아티팩트 버전 (선택, 예: 1.0.0)</label>
           <input id="output-version" type="text" placeholder="비어있으면 원본 버전 유지" />
         </div>
+        <p id="version-hint" class="field-hint hidden"></p>
 
         <div class="stage-option">
           <label class="checkbox-label"><input id="run-stage1" type="checkbox" checked /> 1단계: 목표 스택으로 마이그레이션 실행</label>

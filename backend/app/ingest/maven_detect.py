@@ -82,3 +82,21 @@ def detect_maven_project(root_dir: Path) -> MavenDetectionResult:
         is_multi_module=bool(modules),
         modules=modules,
     )
+
+
+def read_declared_version(root_pom: Path) -> tuple[str | None, str]:
+    """Returns (version, source). source is "version" if root_pom declares
+    its own <version>, "parent.version" if only inherited via <parent> (the
+    literal XML value, not mvn-resolved), or "none" if neither is present.
+    Used by the pre-submission output-version suggestion (spec:
+    docs/superpowers/specs/2026-08-10-output-version-suggestion-design.md)."""
+    root = _parse_pom(root_pom)
+    version = _text(root, "version")
+    if version:
+        return version, "version"
+    parent_el = root.find("{*}parent")
+    if parent_el is not None:
+        parent_version = _text(parent_el, "version")
+        if parent_version:
+            return parent_version, "parent.version"
+    return None, "none"

@@ -10,6 +10,8 @@ the diff naturally contains only verified changes.
 from __future__ import annotations
 
 import logging
+import os
+import stat
 import subprocess
 from pathlib import Path
 
@@ -17,6 +19,16 @@ from app.config import Settings
 from app.procenv import build_subprocess_env, resolve_executable
 
 logger = logging.getLogger(__name__)
+
+
+def rmtree_clear_readonly(func, path, _exc_info) -> None:
+    """shutil.rmtree callback: git marks committed .git/objects/** files
+    read-only, which raises PermissionError on Windows when os.unlink tries
+    to remove them. Clear the flag and retry once. Shared by any caller that
+    deletes a directory that may contain a git repo (job deletion, the
+    artifact-version pre-submission peek)."""
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
 
 
 class GitCheckpointError(Exception):

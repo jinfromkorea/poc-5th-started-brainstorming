@@ -110,7 +110,7 @@ async def peek_artifact_version(
     except IngestError:
         version, source = None, "none"
     finally:
-        shutil.rmtree(paths.root, onexc=rmtree_clear_readonly, ignore_errors=True)
+        shutil.rmtree(paths.root, onexc=rmtree_clear_readonly)
         if tmp_zip is not None:
             tmp_zip.unlink(missing_ok=True)
 
@@ -119,6 +119,8 @@ async def peek_artifact_version(
 ```
 
 `main.py`에 다른 라우터들과 같은 방식으로 등록한다.
+
+**[구현 중 발견한 이슈]** 초안에는 `shutil.rmtree(..., onexc=rmtree_clear_readonly, ignore_errors=True)`처럼 둘을 같이 썼는데, `ignore_errors=True`가 켜지면 `onexc` 콜백 자체가 아예 호출되지 않는다(파이썬 공식 문서: "If ignore_errors is set, errors are ignored; otherwise, if onexc ... is set, it is called"). 즉 Windows 읽기전용 파일 재시도 로직이 조용히 무력화되는 버그였다 — `ignore_errors`는 빼고 `onexc`만 쓰도록 수정(`jobs.py`의 `delete_job`과 동일 패턴).
 
 ## 프론트엔드 설계
 

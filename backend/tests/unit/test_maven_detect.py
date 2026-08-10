@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from app.ingest.errors import GradleProjectError, NotMavenProjectError
-from app.ingest.maven_detect import detect_maven_project
+from app.ingest.maven_detect import detect_maven_project, read_declared_version
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 
@@ -85,3 +85,35 @@ def test_neither_maven_nor_gradle_rejected(tmp_path):
 
     with pytest.raises(NotMavenProjectError):
         detect_maven_project(tmp_path)
+
+
+def test_read_declared_version_from_own_version_tag(tmp_path):
+    pom_path = tmp_path / "pom.xml"
+    pom_path.write_text(_single_module_pom())  # <version>1.0.0</version>
+
+    assert read_declared_version(pom_path) == ("1.0.0", "version")
+
+
+def test_read_declared_version_falls_back_to_parent_version(tmp_path):
+    pom_path = tmp_path / "pom.xml"
+    pom_path.write_text(f"""<project xmlns="{_POM_NS}">
+        <modelVersion>4.0.0</modelVersion>
+        <parent>
+            <groupId>com.example</groupId>
+            <artifactId>demo-parent</artifactId>
+            <version>2.0.0-SNAPSHOT</version>
+        </parent>
+        <artifactId>demo-module</artifactId>
+    </project>""")
+
+    assert read_declared_version(pom_path) == ("2.0.0-SNAPSHOT", "parent.version")
+
+
+def test_read_declared_version_returns_none_when_absent(tmp_path):
+    pom_path = tmp_path / "pom.xml"
+    pom_path.write_text(f"""<project xmlns="{_POM_NS}">
+        <modelVersion>4.0.0</modelVersion>
+        <artifactId>demo-module</artifactId>
+    </project>""")
+
+    assert read_declared_version(pom_path) == (None, "none")
