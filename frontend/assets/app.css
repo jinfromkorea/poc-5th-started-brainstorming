@@ -408,6 +408,12 @@ button.secondary:hover:not(:disabled) {
   margin-top: 12px;
 }
 
+.vuln-details > summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin: 1rem 0 0.5rem;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;

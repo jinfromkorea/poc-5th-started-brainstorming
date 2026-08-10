@@ -4,6 +4,36 @@ const jobsError = el("jobs-error");
 const jobsTableBody = el("jobs-table-body");
 const refreshJobsBtn = el("refresh-jobs-btn");
 
+const ACTIVE_STATUSES = new Set(["queued", "running", "awaiting_approval"]);
+
+async function stopJob(jobId, btn) {
+  if (!confirm("정말 이 작업을 중지할까요? 지금까지의 변경 내용은 저장되지 않습니다.")) return;
+  btn.disabled = true;
+  btn.textContent = "중지 중...";
+  try {
+    const res = await fetch(apiUrl(`/jobs/${jobId}/cancel`), { method: "POST", headers: authHeaders() });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (err) {
+    alert(`중지 요청 실패: ${err.message}`);
+  } finally {
+    loadJobs();
+  }
+}
+
+async function deleteJob(jobId, btn) {
+  if (!confirm("이 작업 이력을 삭제할까요? 관련 파일도 함께 삭제되며 복구할 수 없습니다.")) return;
+  btn.disabled = true;
+  btn.textContent = "삭제 중...";
+  try {
+    const res = await fetch(apiUrl(`/jobs/${jobId}`), { method: "DELETE", headers: authHeaders() });
+    if (!res.ok && res.status !== 204) throw new Error(`HTTP ${res.status}`);
+  } catch (err) {
+    alert(`삭제 실패: ${err.message}`);
+  } finally {
+    loadJobs();
+  }
+}
+
 function formatDateTime(iso) {
   return new Date(iso).toLocaleString();
 }
@@ -48,6 +78,20 @@ async function loadJobs() {
       cell.textContent = text;
       row.appendChild(cell);
     });
+
+    const actionCell = document.createElement("td");
+    const actionBtn = document.createElement("button");
+    actionBtn.type = "button";
+    actionBtn.className = "secondary";
+    if (ACTIVE_STATUSES.has(job.status)) {
+      actionBtn.textContent = "중지";
+      actionBtn.addEventListener("click", () => stopJob(job.job_id, actionBtn));
+    } else {
+      actionBtn.textContent = "삭제";
+      actionBtn.addEventListener("click", () => deleteJob(job.job_id, actionBtn));
+    }
+    actionCell.appendChild(actionBtn);
+    row.appendChild(actionCell);
 
     jobsTableBody.appendChild(row);
   });

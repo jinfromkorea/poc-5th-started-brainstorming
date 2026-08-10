@@ -59,3 +59,7 @@ python -m http.server 5500
 - [ ] `history.html → job.html?job={id}`로 진입한, 아직 실행 중인 job에서도 "중지" 버튼이 똑같이 동작하는지
 - [ ] 이미 끝난 job의 `job.html` 상세 페이지에는 "중지" 버튼이 보이지 않는지
 - [ ] `backend/data/jobs/{id}/output/CANCELLED` 마커 파일이 생기고, 취소 시점에 실행 중이던 로그 파일(`output/logs/**/*.log`) 끝에 `[강제종료됨]` 줄이 남는지, 실제 `mvn`/`java` 프로세스가 OS에서 종료됐는지(작업 관리자 등으로 확인)
+- [ ] `history.html`에서 이미 끝난(success/failed/cancelled) job 행에 "삭제" 버튼이 보이고, 클릭 → 확인 다이얼로그 → 목록에서 사라지고 `backend/data/jobs/{id}/` 디렉터리가 실제로 지워졌는지
+- [ ] 진행 중인 job을 하나 시작해 `history.html`에서 "중지" 버튼이 보이는지, 클릭 후 상태가 `cancelled`로 바뀌면 "삭제" 버튼으로 자동 전환되는지
+- [ ] 취약점이 있는 job의 `job.html`에서 두 표가 기본 접힌 채로 로드되고, 배지 건수가 표 실제 행 수와 일치하며, 클릭 시 펼쳐지는지
+- [ ] 삭제 후 새 job을 하나 시작해 id가 삭제된 번호와 충돌하지 않고 이어지는지

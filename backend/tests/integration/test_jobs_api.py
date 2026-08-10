@@ -367,6 +367,102 @@ def test_cancel_awaiting_approval_job_finalizes_immediately(app_client, monkeypa
     assert app_client.get(f"/jobs/{job_id}").json()["status"] == "cancelled"
 
 
+def test_delete_unknown_job_returns_404(app_client):
+    resp = app_client.delete("/jobs/does-not-exist")
+    assert resp.status_code == 404
+
+
+def test_delete_terminal_job_removes_row_and_directory(app_client, tmp_path):
+    zip_content = _zip_bytes({"pom.xml": _POM})
+    create_resp = app_client.post(
+        "/jobs",
+        data={"run_stage1": "false", "run_stage2": "false"},
+        files={"zip_file": ("project.zip", zip_content, "application/zip")},
+    )
+    job_id = create_resp.json()["job_id"]
+    final = _wait_for_terminal_status(app_client, job_id)
+    assert final["status"] == "success"
+
+    job_dir = tmp_path / "jobs" / job_id
+    assert job_dir.exists()
+
+    resp = app_client.delete(f"/jobs/{job_id}")
+    assert resp.status_code == 204
+
+    assert app_client.get(f"/jobs/{job_id}").status_code == 404
+    assert not job_dir.exists()
+
+
+def test_delete_running_job_returns_409(tmp_path, monkeypatch):
+    # Same "block inside run_combined_scan" technique as
+    # test_cancel_running_job_marks_it_cancelled -- reliably catches the job
+    # in "running" without racing a real scan/mvn call.
+    reset_job_manager()
+    test_settings = Settings(
+        _env_file=None,
+        jobs_data_dir=str(tmp_path / "jobs"),
+        database_url=f"sqlite:///{(tmp_path / 'test.db').as_posix()}",
+    )
+    init_db(test_settings)
+    app = create_app()
+    app.dependency_overrides[get_settings] = lambda: test_settings
+
+    scan_started = threading.Event()
+    release_scan = threading.Event()
+
+    async def blocking_scan(work_dir, output_dir, settings_):
+        scan_started.set()
+        while not release_scan.is_set():
+            await asyncio.sleep(0.02)
+        return []
+
+    monkeypatch.setattr("app.orchestration.pipeline.run_combined_scan", blocking_scan)
+
+    with TestClient(app) as client:
+        zip_content = _zip_bytes({"pom.xml": _POM})
+        create_resp = client.post(
+            "/jobs",
+            data={"run_stage1": "true", "run_stage2": "false"},
+            files={"zip_file": ("project.zip", zip_content, "application/zip")},
+        )
+        job_id = create_resp.json()["job_id"]
+        assert scan_started.wait(timeout=5), "job never reached running"
+
+        resp = client.delete(f"/jobs/{job_id}")
+        assert resp.status_code == 409
+
+        release_scan.set()
+        _wait_for_terminal_status(client, job_id)
+
+    reset_job_manager()
+
+
+def test_delete_then_create_does_not_reuse_a_live_id(app_client):
+    zip_content = _zip_bytes({"pom.xml": _POM})
+    ids = []
+    for _ in range(3):
+        resp = app_client.post(
+            "/jobs",
+            data={"run_stage1": "false", "run_stage2": "false"},
+            files={"zip_file": ("project.zip", zip_content, "application/zip")},
+        )
+        job_id = resp.json()["job_id"]
+        _wait_for_terminal_status(app_client, job_id)
+        ids.append(job_id)
+
+    del_resp = app_client.delete(f"/jobs/{ids[1]}")
+    assert del_resp.status_code == 204
+
+    new_resp = app_client.post(
+        "/jobs",
+        data={"run_stage1": "false", "run_stage2": "false"},
+        files={"zip_file": ("project.zip", zip_content, "application/zip")},
+    )
+    new_id = new_resp.json()["job_id"]
+    assert new_id not in ids
+    assert int(new_id) > max(int(i) for i in ids)
+
+
 def test_list_jobs_returns_empty_list_when_no_jobs(app_client):
     resp = app_client.get("/jobs")
     assert resp.status_code == 200

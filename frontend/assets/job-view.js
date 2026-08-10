@@ -12,9 +12,11 @@ const stackSpringAi = el("stack-spring-ai");
 const vulnBaselineSection = el("vuln-baseline-section");
 const vulnBaselineTableBody = el("vuln-baseline-table-body");
 const vulnBaselineEmpty = el("vuln-baseline-empty");
+const vulnBaselineCount = el("vuln-baseline-count");
 const vulnSection = el("vuln-section");
 const vulnTableBody = el("vuln-table-body");
 const vulnEmpty = el("vuln-empty");
+const vulnCount = el("vuln-count");
 
 const progressPanel = el("progress-panel");
 const jobIdDisplay = el("job-id-display");
@@ -56,9 +58,10 @@ function renderInventory(detected) {
   stackSpringAi.textContent = detected.spring_ai_version || "감지 안됨";
 }
 
-function renderVulnerabilitiesInto(vulnerabilities, { section, tableBody, emptyMsg }) {
+function renderVulnerabilitiesInto(vulnerabilities, { section, tableBody, emptyMsg, countBadge }) {
   analysisPanel.classList.remove("hidden");
   section.classList.remove("hidden");
+  countBadge.textContent = `${vulnerabilities.length}건`;
 
   tableBody.innerHTML = "";
   if (vulnerabilities.length === 0) {
@@ -103,11 +106,17 @@ function renderVulnerabilitiesBaseline(vulnerabilities) {
     section: vulnBaselineSection,
     tableBody: vulnBaselineTableBody,
     emptyMsg: vulnBaselineEmpty,
+    countBadge: vulnBaselineCount,
   });
 }
 
 function renderVulnerabilities(vulnerabilities) {
-  renderVulnerabilitiesInto(vulnerabilities, { section: vulnSection, tableBody: vulnTableBody, emptyMsg: vulnEmpty });
+  renderVulnerabilitiesInto(vulnerabilities, {
+    section: vulnSection,
+    tableBody: vulnTableBody,
+    emptyMsg: vulnEmpty,
+    countBadge: vulnCount,
+  });
 }
 
 function showProceedButton(jobId) {

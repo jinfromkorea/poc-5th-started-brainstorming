@@ -67,6 +67,19 @@ async def delete_job(
 
 `shutil`은 이미 파일 상단에 import돼 있음(zip 업로드 처리에 사용 중).
 
+**구현 중 발견한 이슈**: Windows에서는 `shutil.rmtree`가 `work/.git/objects/**`의 읽기 전용 파일에서 `PermissionError: [WinError 5]`로 실패한다(git이 커밋된 객체 파일을 읽기 전용으로 만들기 때문). `onexc` 콜백으로 읽기 전용 플래그를 해제하고 재시도하도록 처리:
+
+```python
+def _rmtree_clear_readonly(func, path, _exc_info) -> None:
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+...
+shutil.rmtree(job_dir, onexc=_rmtree_clear_readonly)
+```
+
+`os`, `stat` import 추가 필요.
+
 **검증**: `backend/tests/integration/test_jobs_api.py`에 추가 (기존 `test_cancel_*` 테스트들의 fixture/스타일 그대로 재사용):
 - `test_delete_terminal_job_removes_row_and_directory`: `app_client`로 job을 하나 완주시켜 terminal 상태로 만든 뒤(`_wait_for_terminal_status` 재사용) `DELETE /jobs/{id}` → 204, 이후 `GET /jobs/{id}` → 404, `backend/data/jobs/{id}/`(테스트에서는 `tmp_path` 하위 경로) 디렉터리가 사라졌는지.
 - `test_delete_non_terminal_job_returns_409`: `queued`/`running` 상태에서 삭제 시도 → 409 (기존 `test_cancel_already_terminal_job_returns_409`의 반대 케이스, 같은 방식으로 상태를 세팅).

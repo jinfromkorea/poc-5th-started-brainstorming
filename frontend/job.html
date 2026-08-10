@@ -38,8 +38,8 @@
         <div class="field-row"><span class="label">Spring Cloud</span><span id="stack-spring-cloud">-</span></div>
         <div class="field-row"><span class="label">Spring AI</span><span id="stack-spring-ai">-</span></div>
       </div>
-      <div id="vuln-baseline-section" class="hidden">
-        <h3>오픈소스 취약점 (마이그레이션 전)</h3>
+      <details id="vuln-baseline-section" class="vuln-details hidden">
+        <summary>오픈소스 취약점 (마이그레이션 전) <span id="vuln-baseline-count" class="badge">0건</span></summary>
         <div class="table-scroll">
           <table id="vuln-baseline-table">
             <thead>
@@ -56,9 +56,9 @@
           </table>
         </div>
         <p id="vuln-baseline-empty" class="hidden">임계값 이상 취약점이 발견되지 않았습니다.</p>
-      </div>
-      <div id="vuln-section" class="hidden">
-        <h3>오픈소스 취약점 (2단계 패치 대상)</h3>
+      </details>
+      <details id="vuln-section" class="vuln-details hidden">
+        <summary>오픈소스 취약점 (2단계 패치 대상) <span id="vuln-count" class="badge">0건</span></summary>
         <div class="table-scroll">
           <table id="vuln-table">
             <thead>
@@ -75,7 +75,7 @@
           </table>
         </div>
         <p id="vuln-empty" class="hidden">임계값 이상 취약점이 발견되지 않았습니다.</p>
-      </div>
+      </details>
     </section>
 
     <section id="artifacts-panel" class="card hidden">

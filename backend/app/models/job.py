@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, DateTime, Integer, String, func
+from sqlalchemy import JSON, DateTime, Integer, String, cast, func
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.models.db import Base
@@ -57,13 +57,15 @@ def next_job_id(db: Session) -> str:
     UUID -- this is a single-developer local tool where "which numbered run
     was this" reads better than a 32-char hex blob, and it also becomes the
     job's directory name under JOBS_DATA_DIR (source/work/output), so a
-    short number is much easier to spot in a file browser. Counts existing
-    rows rather than keeping a separate counter table; safe because jobs are
-    never deleted (there's no delete endpoint) and job creation is handled
-    synchronously on a single event loop (see api/routers/jobs.py), so two
-    requests can never read the same count before either commits."""
-    count = db.query(func.count(Job.id)).scalar() or 0
-    return str(count + 1)
+    short number is much easier to spot in a file browser. The highest
+    existing id + 1, not a row count -- jobs can now be deleted (DELETE
+    /jobs/{id}), and a count-based scheme would reuse a still-live id (e.g.
+    job 1/2/3 with 2 deleted -> count=2 -> next id "3" collides with the
+    existing job 3). Deleted ids are never reused. cast(Job.id, Integer) is
+    verified against SQLite only -- this project has no plans to support any
+    other DATABASE_URL dialect."""
+    max_id = db.query(func.max(cast(Job.id, Integer))).scalar()
+    return str((max_id or 0) + 1)
 
 
 class JobEvent(Base):

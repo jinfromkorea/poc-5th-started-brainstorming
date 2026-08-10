@@ -7,7 +7,9 @@ GET /jobs/{id} polls status; GET /jobs/{id}/events streams progress via SSE
 
 from __future__ import annotations
 
+import os
 import shutil
+import stat
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -17,13 +19,21 @@ from app.api.deps import require_api_token
 from app.config import Settings, get_settings
 from app.ingest.workspace import GitSourceSpec, ZipSourceSpec
 from app.models.db import get_db_session, session_factory
-from app.models.job import TERMINAL_JOB_STATUSES, Job, next_job_id
+from app.models.job import TERMINAL_JOB_STATUSES, Job, JobEvent, next_job_id
 from app.orchestration.concurrency import get_job_manager
 from app.orchestration.pipeline import _finalize_cancelled, run_pipeline, run_pipeline_resume_stage2
 from app.schemas.job import JobCreateResponse, JobStatusResponse
 from app.streaming.sse import stream_job_events
 
 router = APIRouter(prefix="/jobs", tags=["jobs"], dependencies=[Depends(require_api_token)])
+
+
+def _rmtree_clear_readonly(func, path, _exc_info) -> None:
+    """shutil.rmtree callback (see delete_job): git marks committed
+    .git/objects/** files read-only, which raises PermissionError on Windows
+    when os.unlink tries to remove them. Clear the flag and retry once."""
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
 
 
 @router.post("", response_model=JobCreateResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -184,6 +194,38 @@ async def cancel_job(
 
     db.refresh(job)
     return JobCreateResponse(job_id=job_id, status=job.status)
+
+
+@router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_job(
+    job_id: str,
+    settings: Settings = Depends(get_settings),
+    db=Depends(get_db_session),
+) -> None:
+    """Removes a terminal job's DB row and its on-disk source/work/output
+    directory (spec: docs/superpowers/specs/2026-08-10-history-delete-and-
+    analysis-collapse-design.md). Non-terminal jobs must be cancelled first
+    -- deleting a directory a live pipeline is still writing to could leave
+    orphaned processes or corrupt output."""
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"unknown job_id: {job_id}")
+    if job.status not in TERMINAL_JOB_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"job {job_id} is not terminal (status={job.status}); cancel it first",
+        )
+
+    # job_events has no FK/relationship to jobs (job_id is a logical
+    # reference only), so there's no ORM cascade to rely on -- delete it
+    # explicitly before the job row.
+    db.query(JobEvent).filter(JobEvent.job_id == job_id).delete()
+    db.delete(job)
+    db.commit()
+
+    job_dir = settings.jobs_dir / job_id
+    if job_dir.exists():
+        shutil.rmtree(job_dir, onexc=_rmtree_clear_readonly)
 
 
 @router.get("/{job_id}/events")
