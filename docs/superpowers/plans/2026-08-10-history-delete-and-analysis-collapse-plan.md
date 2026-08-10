@@ -21,14 +21,16 @@ def next_job_id(db: Session) -> str:
     """지금까지 나온 가장 큰 id + 1. job이 삭제될 수 있으므로 COUNT(*) 기반
     채번은 ID 충돌을 일으킬 수 있다 (예: job 1/2/3 중 2를 삭제하면 count=2 ->
     다음 id "3"이 기존 job 3과 PK 충돌). MAX 기반은 삭제 후에도 항상 안전하게
-    증가하며, 삭제된 id는 재사용되지 않는다."""
+    증가하며, 삭제된 id는 재사용되지 않는다. cast(Job.id, Integer)는
+    SQLite 기준으로만 검증한다 -- 이 프로젝트는 SQLite 외 DB를 쓸 계획이
+    없다(DATABASE_URL=sqlite:///...)."""
     max_id = db.query(func.max(cast(Job.id, Integer))).scalar()
     return str((max_id or 0) + 1)
 ```
 
 - 기존 docstring/주석 중 "jobs are never deleted (there's no delete endpoint)" 전제를 언급하는 부분을 삭제 기능이 생겼다는 사실에 맞게 수정.
 
-**검증**: `grep -rn "next_job_id" backend` 로 호출부가 `create_job` 한 곳뿐인지 재확인. 신규 단위 테스트(`backend/tests/unit/`에 `test_job.py`가 없으면 새로 생성, 있으면 추가): job 1/2/3을 만들고 2를 지운 뒤 `next_job_id()`가 "4"를 반환하는지(직접 `Job` row를 add/delete해서 재현, 파이프라인 실행 불필요).
+**검증**: `grep -rn "next_job_id" backend` 로 호출부가 `create_job` 한 곳뿐인지 재확인. 신규 단위 테스트(`backend/tests/unit/`에 `test_job.py`가 없으면 새로 생성, 있으면 추가) — **SQLite 기준으로만 작성**(다른 DB 방언 호환성은 검증 대상이 아님, 프로젝트가 SQLite만 지원): job 1/2/3을 만들고 2를 지운 뒤 `next_job_id()`가 "4"를 반환하는지(직접 `Job` row를 add/delete해서 재현, 파이프라인 실행 불필요). 이 테스트가 실제 `cast(Job.id, Integer)` -> `CAST(jobs.id AS INTEGER)` 번역이 SQLite에서 의도대로 동작함을 확인하는 유일한 지점이다.
 
 ## 2. `api/routers/jobs.py` — `DELETE /jobs/{job_id}`
 
@@ -51,6 +53,9 @@ async def delete_job(
             detail=f"job {job_id} is not terminal (status={job.status}); cancel it first",
         )
 
+    # job_events에는 jobs로의 FK/relationship이 없어(job_id는 논리적 참조일
+    # 뿐) ORM cascade가 걸리지 않는다 -- db.delete(job) 전에 명시적으로
+    # 지운다.
     db.query(JobEvent).filter(JobEvent.job_id == job_id).delete()
     db.delete(job)
     db.commit()
@@ -183,8 +188,3 @@ async function deleteJob(jobId, btn) {
   2. 진행 중인 job을 하나 시작해 `history.html`에서 "중지" 버튼이 보이는지, 클릭 후 상태가 `cancelled`로 바뀌면 "삭제" 버튼으로 자동 전환되는지.
   3. 취약점이 있는 job의 `job.html`에서 두 표가 기본 접힌 채로 로드되고, 배지 건수가 표 실제 행 수와 일치하며, 클릭 시 펼쳐지는지.
   4. 삭제 후 새 job을 하나 시작해 id가 삭제된 번호와 충돌하지 않고 이어지는지.
-
-## 참고 — 스펙에서 구현 단계로 넘어오며 확정해야 할 세부사항
-
-- `next_job_id`의 `MAX(CAST(id AS INTEGER))`는 SQLite에서 `id` 컬럼이 문자열 PK("1", "2", ...)이므로 `CAST(... AS INTEGER)`가 필요 — SQLAlchemy의 `cast(Job.id, Integer)`가 이를 `CAST(jobs.id AS INTEGER)`로 정확히 번역하는지 실제 SQLite에서 한 번 확인(다른 DB 방언을 쓸 계획이 없으므로 SQLite 기준으로만 검증하면 충분).
-- `DELETE /jobs/{job_id}`의 `job_events` 삭제는 FK 제약이 없으므로(스펙 §4 참고, `job_id`는 논리적 참조일 뿐) `db.delete(job)` 전에 명시적으로 지워야 한다 — ORM cascade에 의존하지 않음.
