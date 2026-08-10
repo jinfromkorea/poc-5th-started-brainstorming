@@ -27,6 +27,7 @@ const logList = el("log-list");
 const artifactsPanel = el("artifacts-panel");
 const viewDiffBtn = el("view-diff-btn");
 const viewReportBtn = el("view-report-btn");
+const viewFilesLink = el("view-files-link");
 const handoffList = el("handoff-list");
 const artifactViewer = el("artifact-viewer");
 const artifactViewerTitle = el("artifact-viewer-title");
@@ -248,6 +249,13 @@ async function loadArtifacts(jobId) {
 
   viewReportBtn.disabled = !body.report;
   viewReportBtn.onclick = () => showArtifact("report (report.md)", apiUrl(`/jobs/${jobId}/artifacts/report`), "report.md");
+
+  if (body.diff) {
+    viewFilesLink.href = `files.html?job=${encodeURIComponent(jobId)}`;
+    viewFilesLink.classList.remove("hidden");
+  } else {
+    viewFilesLink.classList.add("hidden");
+  }
 
   handoffList.innerHTML = "";
   body.handoff.forEach((name) => {

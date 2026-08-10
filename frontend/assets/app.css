@@ -414,6 +414,31 @@ button.secondary:hover:not(:disabled) {
   margin: 1rem 0 0.5rem;
 }
 
+.files-layout {
+  display: flex;
+  gap: 1rem;
+}
+
+.split-view {
+  display: flex;
+  gap: 1rem;
+}
+
+.split-pane {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.tree-file {
+  display: block;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  padding: 0.15rem 0;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;

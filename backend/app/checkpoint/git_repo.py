@@ -166,6 +166,52 @@ def resolve_ingest_baseline(work_dir: Path, settings: Settings) -> str:
     return _ordered_shas(work_dir, settings)[0]
 
 
+def list_tracked_files(work_dir: Path, settings: Settings) -> list[str]:
+    """git ls-files result: every file tracked at HEAD (work_dir's own
+    .gitignore is already reflected here). Used by the artifact file-tree
+    viewer (spec: docs/superpowers/specs/2026-08-10-artifact-file-tree-
+    viewer-design.md) to enumerate what to show without walking the
+    filesystem directly."""
+    env = build_subprocess_env(settings)
+    return [line for line in _run_git(work_dir, ["ls-files"], env).stdout.splitlines() if line.strip()]
+
+
+def diff_status_map(work_dir: Path, settings: Settings, baseline_sha: str) -> dict[str, str]:
+    """Path -> raw git status code ("A" or "M") for every file added/modified
+    between baseline and HEAD. --no-renames simplifies a rename into a
+    delete+add pair (the file-tree viewer only needs per-file status badges,
+    not rename tracking). Deleted paths ("D") are omitted from the result --
+    a deleted path doesn't exist at HEAD, so it's already absent from
+    list_tracked_files() too, and the tree viewer doesn't show deleted
+    files."""
+    env = build_subprocess_env(settings)
+    out = _run_git(work_dir, ["diff", "--name-status", "--no-renames", baseline_sha, "HEAD"], env).stdout
+    result: dict[str, str] = {}
+    for line in out.splitlines():
+        if not line.strip():
+            continue
+        status_code, path = line.split("\t", 1)
+        if status_code in ("A", "M"):
+            result[path] = status_code
+    return result
+
+
+def show_file_bytes(work_dir: Path, settings: Settings, ref: str, path: str) -> bytes | None:
+    """Raw bytes of git show {ref}:{path}. Returns None if path didn't exist
+    at that ref (e.g. the baseline-time content of a file added later, or
+    vice versa). Uses a separate bytes-mode subprocess call rather than
+    _run_git (which is text-mode) so binary file content isn't corrupted by
+    forced UTF-8 decoding."""
+    env = build_subprocess_env(settings)
+    executable = resolve_executable("git")
+    proc = subprocess.run(
+        [executable, "show", f"{ref}:{path}"], cwd=work_dir, capture_output=True, env=env, check=False
+    )
+    if proc.returncode != 0:
+        return None
+    return proc.stdout
+
+
 def log_since(work_dir: Path, settings: Settings, baseline_sha: str) -> str:
     """One-line-per-checkpoint history since baseline -- a quick "what
     happened, in order" summary for the report, independent of the full diff."""
