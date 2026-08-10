@@ -194,7 +194,7 @@ main {
 }
 
 .field-hint {
-  margin: 6px 0 0;
+  margin: 6px 0 0 22px;
   padding: 8px 12px;
   background: var(--info-bg);
   color: var(--info);
