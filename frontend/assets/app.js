@@ -12,6 +12,16 @@ const outputVersionInput = el("output-version");
 const runStage1Checkbox = el("run-stage1");
 const runStage2Checkbox = el("run-stage2");
 
+const langgraphHelpBtn = el("langgraph-help-btn");
+const langgraphModal = el("langgraph-modal");
+const langgraphModalCloseBtn = el("langgraph-modal-close-btn");
+
+langgraphHelpBtn.addEventListener("click", () => langgraphModal.classList.remove("hidden"));
+langgraphModalCloseBtn.addEventListener("click", () => langgraphModal.classList.add("hidden"));
+langgraphModal.addEventListener("click", (ev) => {
+  if (ev.target === langgraphModal) langgraphModal.classList.add("hidden");
+});
+
 document.querySelectorAll('input[name="source-type"]').forEach((radio) => {
   radio.addEventListener("change", () => {
     const isGit = document.querySelector('input[name="source-type"]:checked').value === "git";

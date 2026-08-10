@@ -124,6 +124,37 @@ header h1 {
   font-size: 1rem;
 }
 
+.modal-wide {
+  max-width: 940px;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+.modal h3 {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin: 20px 0 8px;
+}
+
+.langgraph-diagram {
+  overflow-x: auto;
+}
+
+.langgraph-diagram svg {
+  width: 100%;
+  min-width: 640px;
+  height: auto;
+  display: block;
+}
+
+.help-btn {
+  border-radius: 999px;
+  width: 28px;
+  padding: 0;
+  text-align: center;
+}
+
 .modal-section-heading {
   font-family: var(--font-mono);
   font-size: 0.78rem;
