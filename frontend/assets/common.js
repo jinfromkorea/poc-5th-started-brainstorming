@@ -33,6 +33,11 @@ function injectSettingsUI() {
         <span id="cache-status-text">불러오는 중...</span>
         <button type="button" id="cache-refresh-btn" class="secondary" title="지금 갱신">⟳</button>
       </div>
+      <h3 class="modal-section-heading">LLM 모델</h3>
+      <div class="field-row">
+        <label for="llm-model-select">사용할 모델</label>
+        <select id="llm-model-select"></select>
+      </div>
       <div class="modal-close-row">
         <button type="button" id="settings-close-btn" class="secondary">닫기</button>
       </div>
@@ -43,12 +48,14 @@ function injectSettingsUI() {
   settingsBtn.addEventListener("click", () => {
     overlay.classList.remove("hidden");
     loadCacheStatus();
+    loadLlmModel();
   });
   el("settings-close-btn").addEventListener("click", () => overlay.classList.add("hidden"));
   overlay.addEventListener("click", (ev) => {
     if (ev.target === overlay) overlay.classList.add("hidden");
   });
   el("cache-refresh-btn").addEventListener("click", startCacheRefresh);
+  el("llm-model-select").addEventListener("change", onLlmModelChange);
 }
 
 injectSettingsUI();
@@ -86,6 +93,8 @@ loadConnectionSettings();
 const cacheStatusText = el("cache-status-text");
 const cacheRefreshBtn = el("cache-refresh-btn");
 let cacheRefreshEventSource = null;
+
+const llmModelSelect = el("llm-model-select");
 
 function formatCacheTimestamp(iso) {
   return iso ? new Date(iso).toLocaleString() : "갱신 기록 없음";
@@ -178,4 +187,38 @@ function connectCacheRefreshSSE(jobId) {
       loadCacheStatus();
     }
   });
+}
+
+async function loadLlmModel() {
+  try {
+    const res = await fetch(apiUrl("/settings/llm-model"), { headers: authHeaders() });
+    if (!res.ok) return;
+    const body = await res.json();
+    llmModelSelect.innerHTML = "";
+    body.available.forEach((model) => {
+      const opt = document.createElement("option");
+      opt.value = model;
+      opt.textContent = model;
+      if (model === body.current) opt.selected = true;
+      llmModelSelect.appendChild(opt);
+    });
+  } catch (err) {
+    // Fails quietly -- the select just stays empty; the rest of the modal
+    // (connection settings, cache status) still works.
+  }
+}
+
+async function onLlmModelChange() {
+  const chosen = llmModelSelect.value;
+  try {
+    const res = await fetch(apiUrl("/settings/llm-model"), {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ model: chosen }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (err) {
+    alert(`모델 변경 실패: ${err.message}`);
+    loadLlmModel(); // revert the select back to the actual current value
+  }
 }

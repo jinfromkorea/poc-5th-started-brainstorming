@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from app.config import BACKEND_DIR, Settings, configure_langsmith_env
+from app.config import BACKEND_DIR, Settings, configure_langsmith_env, write_llm_model_to_env
 
 
 def test_defaults_load_without_env_file():
@@ -12,6 +12,42 @@ def test_defaults_load_without_env_file():
     assert s.max_concurrent_repos == 3
     assert s.fail_on_cvss == 7.0
     assert s.compile_fix_max_attempts == 2
+
+
+def test_llm_available_models_list_defaults_to_two_models():
+    s = Settings(_env_file=None)
+    assert s.llm_available_models_list == ["gpt-5.4-mini", "gpt-4o-mini"]
+
+
+def test_llm_available_models_list_parses_custom_csv():
+    s = Settings(_env_file=None, llm_available_models="a, b ,c")
+    assert s.llm_available_models_list == ["a", "b", "c"]
+
+
+def test_write_llm_model_to_env_replaces_only_that_line(tmp_path):
+    env_path = tmp_path / ".env"
+    env_path.write_text("LLM_MODEL=old\nOPENAI_API_KEY=secret\n", encoding="utf-8")
+
+    write_llm_model_to_env("new", env_path=env_path)
+
+    assert env_path.read_text(encoding="utf-8") == "LLM_MODEL=new\nOPENAI_API_KEY=secret\n"
+
+
+def test_write_llm_model_to_env_appends_when_missing(tmp_path):
+    env_path = tmp_path / ".env"
+    env_path.write_text("OPENAI_API_KEY=secret\n", encoding="utf-8")
+
+    write_llm_model_to_env("new", env_path=env_path)
+
+    assert env_path.read_text(encoding="utf-8") == "OPENAI_API_KEY=secret\nLLM_MODEL=new\n"
+
+
+def test_write_llm_model_to_env_creates_file_when_missing(tmp_path):
+    env_path = tmp_path / ".env"
+
+    write_llm_model_to_env("new", env_path=env_path)
+
+    assert env_path.read_text(encoding="utf-8") == "LLM_MODEL=new\n"
 
 
 def test_paths_resolve_against_backend_dir_not_cwd():

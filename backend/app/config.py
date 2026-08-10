@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     # LLM
     openai_api_key: str = ""
     llm_model: str = "gpt-5.4-mini"
+    llm_available_models: str = "gpt-5.4-mini,gpt-4o-mini"
     inventory_maven_enrichment_enabled: bool = True
     inventory_deep_agent_enabled: bool = True
     inventory_confidence_threshold: float = 0.85
@@ -128,6 +129,10 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.cors_allow_origins.split(",") if o.strip()]
 
     @property
+    def llm_available_models_list(self) -> list[str]:
+        return [m.strip() for m in self.llm_available_models.split(",") if m.strip()]
+
+    @property
     def database_url_resolved(self) -> str:
         """A relative sqlite URL (sqlite:///./data/app.db) resolves against
         backend/, same principle as every other path setting -- otherwise it
@@ -156,6 +161,26 @@ def configure_langsmith_env(settings: Settings) -> None:
     os.environ.setdefault("LANGSMITH_TRACING", "true" if settings.langsmith_tracing else "false")
     os.environ.setdefault("LANGSMITH_PROJECT", settings.langsmith_project)
     os.environ.setdefault("LANGSMITH_ENDPOINT", settings.langsmith_endpoint)
+
+
+def write_llm_model_to_env(new_model: str, env_path: Path | None = None) -> None:
+    """Patches only the LLM_MODEL= line of backend/.env (appending it if
+    missing, creating the file if it doesn't exist yet), leaving every other
+    line -- including secrets like OPENAI_API_KEY -- untouched. Updating the
+    cached Settings singleton so the change applies without a restart is the
+    caller's job (see api/routers/settings.py); this function only persists
+    the value to disk. env_path lets tests inject a temp file instead of the
+    real backend/.env (defaults to the real path)."""
+    env_path = env_path or (BACKEND_DIR / ".env")
+    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.is_file() else []
+    new_line = f"LLM_MODEL={new_model}"
+    for i, line in enumerate(lines):
+        if line.startswith("LLM_MODEL="):
+            lines[i] = new_line
+            break
+    else:
+        lines.append(new_line)
+    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 @lru_cache

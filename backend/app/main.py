@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routers import artifacts, cache, health, jobs
+from app.api.routers import settings as settings_router
 from app.config import configure_langsmith_env, get_settings
 from app.logging_conf import configure_logging
 from app.models.db import init_db
@@ -35,6 +36,7 @@ def create_app() -> FastAPI:
     app.include_router(jobs.router)
     app.include_router(artifacts.router)
     app.include_router(cache.router)
+    app.include_router(settings_router.router)
 
     return app
 
