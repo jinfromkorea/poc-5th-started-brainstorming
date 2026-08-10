@@ -300,6 +300,8 @@ if (!jobId) {
 
 **검증**: `node --check frontend/assets/files.js`.
 
+**[구현 후 변경]** 위 `<details>` 기반 트리는 최초 구현이었고, 이후 사용자 요청으로 jsTree(jQuery 플러그인)로 교체했다. `frontend/assets/vendor/{jquery,jstree}/`에 jQuery 3.7.1 + jsTree 3.3.16(default 테마, 아이콘 스프라이트 포함)을 다운로드해 커밋(CDN 미사용 — 사내 폐쇄망 로컬 도구라는 특성 고려, cdnjs SRI 해시로 무결성 확인). `files.js`의 `buildTree`/`sortedChildKeys`/`renderNode`는 `buildTreeData`(jsTree의 중첩 `{text, type, children}` JSON 포맷 생성, 폴더 우선 정렬은 그대로 유지) + `$("#file-tree").jstree({...})` 호출로 대체됐고, 파일 클릭은 `select_node.jstree` 이벤트에서 `li_attr["data-path"]`를 읽어 처리한다. `files.html`에 `assets/vendor/jstree/themes/default/style.min.css`, `assets/vendor/jquery/jquery.min.js`, `assets/vendor/jstree/jstree.min.js`를 로드하는 태그가 추가됐다 — 이 프론트엔드의 첫 외부 라이브러리 의존성.
+
 ## 6. `assets/app.css` — 레이아웃 스타일
 
 ```css
@@ -316,19 +318,11 @@ if (!jobId) {
   min-width: 0;
   overflow-x: auto;
 }
-.tree-file {
-  display: block;
-  background: none;
-  border: none;
-  cursor: pointer;
-  text-align: left;
-  padding: 0.15rem 0;
-}
 ```
 
-`.tree-file`은 스펙에 명시되지 않았던 세부사항 — 트리의 파일 leaf가 클릭 가능한 `<button>`이라는 것만 스펙에 있고 구체적 스타일은 구현 시 정한다(목록처럼 보이도록 최소 스타일만).
+**검증**: 브라우저에서 트리가 표시되는지 육안 확인.
 
-**검증**: 브라우저에서 트리의 파일 항목이 버튼처럼 보이지 않고 텍스트 목록처럼 보이는지 육안 확인.
+**[구현 후 변경]** `.tree-file`은 `<details>` 기반 트리의 파일 버튼 스타일이었으나, jsTree 도입 후 트리 자체의 스타일은 jsTree 기본 테마(`assets/vendor/jstree/themes/default/style.min.css`)가 전담하므로 삭제했다.
 
 ## 7. `frontend/README.md` — 수동 스모크 체크리스트 추가
 
@@ -339,7 +333,7 @@ if (!jobId) {
 - `backend/.venv312/Scripts/python.exe -m pytest -q --basetemp=/c/pytesttmp`로 유닛+통합 전체 통과 확인(0단계 베이스라인과 비교해 새로 깨진 테스트가 없는지).
 - 백엔드(`uvicorn`)와 프론트(정적 서버)를 띄우고, 실제 변경 사항이 있는 job으로:
   1. `job.html`에서 "파일별로 보기" 링크가 diff 있는 job에서만 보이는지.
-  2. `files.html`에서 트리가 기본 펼침으로 로드되고 `target/`/`.git` 등이 안 보이는지.
+  2. `files.html`에서 jsTree 트리가 기본 펼침으로 로드되고 `target/`/`.git` 등이 안 보이며, 폴더/파일 아이콘이 정상 표시되는지(vendor CSS/이미지 경로가 올바른지 확인).
   3. 수정된 파일 클릭 시 좌우에 실제 수정 전/후 코드가 보이는지, 새로 추가된 파일은 왼쪽에 "(새로 추가된 파일)"이 나오는지.
   4. (가능하면) 바이너리 파일이 포함된 프로젝트로 job을 하나 만들어 "바이너리 파일은 미리볼 수 없습니다" 문구가 뜨는지.
 

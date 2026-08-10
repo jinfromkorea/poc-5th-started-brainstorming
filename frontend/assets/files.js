@@ -1,7 +1,6 @@
 "use strict";
 
 const treeError = el("tree-error");
-const fileTree = el("file-tree");
 const fileViewerPanel = el("file-viewer-panel");
 const fileViewerTitle = el("file-viewer-title");
 const fileBefore = el("file-before");
@@ -9,53 +8,45 @@ const fileAfter = el("file-after");
 
 const jobId = new URLSearchParams(location.search).get("job");
 
-function buildTree(entries) {
-  const root = {};
+// Builds jsTree's nested JSON node format ({text, type, children}) from the
+// flat {path, status}[] the API returns. A plain object keyed by path
+// segment is used as scratch space while assembling the tree, then
+// converted (folders-before-files, each group alphabetical -- file-explorer
+// style) into the array jsTree expects.
+function buildTreeData(entries) {
+  const root = { children: {} };
   for (const { path, status } of entries) {
     const parts = path.split("/");
     let node = root;
     parts.forEach((part, i) => {
       const isFile = i === parts.length - 1;
-      if (isFile) {
-        node[part] = { __file: true, path, status };
-      } else {
-        node[part] = node[part] || {};
-        node = node[part];
+      if (!node.children[part]) {
+        node.children[part] = isFile
+          ? { text: status === "unchanged" ? part : `${part} [${status}]`, type: "file", li_attr: { "data-path": path } }
+          : { text: part, type: "default", state: { opened: true }, children: {} };
       }
+      node = node.children[part];
     });
   }
-  return root;
-}
 
-function sortedChildKeys(node) {
-  // Folders before files, each group alphabetical -- file-explorer style.
-  return Object.keys(node).sort((a, b) => {
-    const aIsFile = !!node[a].__file;
-    const bIsFile = !!node[b].__file;
-    if (aIsFile !== bIsFile) return aIsFile ? 1 : -1;
-    return a.localeCompare(b);
-  });
-}
-
-function renderNode(name, node, container) {
-  if (node.__file) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "tree-file";
-    btn.textContent = node.status === "unchanged" ? name : `${name} [${node.status}]`;
-    btn.addEventListener("click", () => loadFileDiff(node.path));
-    container.appendChild(btn);
-    return;
+  function toNodeArray(node) {
+    const folders = [];
+    const files = [];
+    Object.keys(node.children)
+      .sort((a, b) => a.localeCompare(b))
+      .forEach((key) => {
+        const child = node.children[key];
+        if (child.type === "file") {
+          files.push(child);
+        } else {
+          child.children = toNodeArray(child);
+          folders.push(child);
+        }
+      });
+    return [...folders, ...files];
   }
-  // <details>/<summary> -- folder collapse/expand is native; open=true is
-  // only the initial state, still togglable by clicking the summary.
-  const details = document.createElement("details");
-  details.open = true;
-  const summary = document.createElement("summary");
-  summary.textContent = name;
-  details.appendChild(summary);
-  sortedChildKeys(node).forEach((key) => renderNode(key, node[key], details));
-  container.appendChild(details);
+
+  return toNodeArray(root);
 }
 
 async function loadTree() {
@@ -66,9 +57,18 @@ async function loadTree() {
     return;
   }
   const entries = await res.json();
-  const tree = buildTree(entries);
-  fileTree.innerHTML = "";
-  sortedChildKeys(tree).forEach((key) => renderNode(key, tree[key], fileTree));
+  const treeData = buildTreeData(entries);
+
+  $("#file-tree")
+    .jstree({
+      core: { data: treeData, themes: { icons: true } },
+      types: { default: { icon: "jstree-folder" }, file: { icon: "jstree-file" } },
+      plugins: ["types"],
+    })
+    .on("select_node.jstree", (_ev, data) => {
+      const path = data.node.li_attr && data.node.li_attr["data-path"];
+      if (path) loadFileDiff(path);
+    });
 }
 
 async function loadFileDiff(path) {
