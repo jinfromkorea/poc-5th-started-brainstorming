@@ -47,6 +47,44 @@ def _wait_for_terminal_status(client: TestClient, job_id: str, timeout: float = 
     raise AssertionError(f"job {job_id} did not reach a terminal status within {timeout}s")
 
 
+def _wait_for_status(client: TestClient, job_id: str, target_status: str, timeout: float = 10.0) -> dict:
+    deadline = time.monotonic() + timeout
+    body: dict = {}
+    while time.monotonic() < deadline:
+        body = client.get(f"/jobs/{job_id}").json()
+        if body["status"] == target_status:
+            return body
+        time.sleep(0.05)
+    raise AssertionError(f"job {job_id} never reached status={target_status!r}, last seen: {body.get('status')!r}")
+
+
+async def _fast_mvn_effective_pom(work_dir, output_path, settings_, log_path=None):
+    # Stage 0 always runs this before anything else -- tests that need to
+    # reach "running"/blocked-in-Stage-0 quickly (rather than waiting on a
+    # real `mvn help:effective-pom`) monkeypatch this in. Writes a real
+    # <version> so read_declared_version/compute_stage0_output_version have
+    # something concrete to work with.
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        '<project xmlns="http://maven.apache.org/POM/4.0.0"><version>1.0.0</version></project>',
+        encoding="utf-8",
+    )
+    return output_path
+
+
+async def _no_vulns_scan(work_dir, output_dir, settings_):
+    return []
+
+
+async def _fast_apply_output_version(work_dir, new_version, settings_, output_dir=None):
+    # The real apply_output_version shells out to `mvn versions:set` -- swap
+    # in a plain checkpoint commit so tests about job/API wiring (not mvn
+    # itself) don't pay for a real Maven invocation.
+    from app.checkpoint.git_repo import commit_checkpoint
+
+    return commit_checkpoint(work_dir, settings_, f"checkpoint: set artifact version to {new_version}")
+
+
 @pytest.fixture()
 def app_client(tmp_path):
     reset_job_manager()  # each test gets a fresh semaphore, not one shared across tests
@@ -229,6 +267,7 @@ def test_cancel_running_job_marks_it_cancelled(tmp_path, monkeypatch):
         await asyncio.sleep(5)  # long enough to reliably cancel before it returns
         raise AssertionError("should have been cancelled before this returned")
 
+    monkeypatch.setattr("app.orchestration.pipeline.mvn_effective_pom", _fast_mvn_effective_pom)
     monkeypatch.setattr("app.orchestration.pipeline.run_combined_scan", slow_baseline_scan)
 
     with TestClient(app) as client:
@@ -282,6 +321,7 @@ def test_cancel_queued_job_marks_it_cancelled(tmp_path, monkeypatch):
             await asyncio.sleep(0.02)
         return []
 
+    monkeypatch.setattr("app.orchestration.pipeline.mvn_effective_pom", _fast_mvn_effective_pom)
     monkeypatch.setattr("app.orchestration.pipeline.run_combined_scan", blocking_scan)
 
     with TestClient(app) as client:
@@ -308,7 +348,10 @@ def test_cancel_queued_job_marks_it_cancelled(tmp_path, monkeypatch):
         assert final["status"] == "cancelled"
 
         release_first.set()
-        _wait_for_terminal_status(client, first_id)  # let the first job finish before the app tears down
+        # Stage 0 pauses at awaiting_version_approval (not terminal) once the
+        # scan finishes -- that's as far as this job goes without a confirm
+        # step; just let it get there before the app tears down.
+        _wait_for_status(client, first_id, "awaiting_version_approval")
 
     reset_job_manager()
 
@@ -341,6 +384,7 @@ def test_cancel_awaiting_approval_job_finalizes_immediately(app_client, monkeypa
 
     monkeypatch.setattr("app.orchestration.pipeline.run_combined_scan", no_baseline_vulns)
     monkeypatch.setattr("app.orchestration.pipeline.mvn_effective_pom", _async_noop_writes_file)
+    monkeypatch.setattr("app.orchestration.pipeline.apply_output_version", _fast_apply_output_version)
     monkeypatch.setattr("app.orchestration.pipeline.run_stage1_migration", stage1_needs_handoff)
 
     zip_content = _zip_bytes({"pom.xml": _POM})
@@ -350,6 +394,14 @@ def test_cancel_awaiting_approval_job_finalizes_immediately(app_client, monkeypa
         files={"zip_file": ("project.zip", zip_content, "application/zip")},
     )
     job_id = create_resp.json()["job_id"]
+
+    # Stage 0 pauses first regardless -- confirm a version before Stage 1
+    # can even start (the _async_noop_writes_file fixture writes no
+    # <version>, so there's no "same as current" value to avoid; anything
+    # works).
+    _wait_for_status(app_client, job_id, "awaiting_version_approval")
+    confirm_resp = app_client.post(f"/jobs/{job_id}/confirm-version", json={"output_version": "9.9.9"})
+    assert confirm_resp.status_code == 200, confirm_resp.text
 
     deadline = time.monotonic() + 10
     status_ = None
@@ -365,6 +417,199 @@ def test_cancel_awaiting_approval_job_finalizes_immediately(app_client, monkeypa
     assert resp.json()["status"] == "cancelled"  # confirmed synchronously -- no live Task, no polling needed
 
     assert app_client.get(f"/jobs/{job_id}").json()["status"] == "cancelled"
+
+
+def test_job_reaches_awaiting_version_approval_with_current_and_suggested_version(tmp_path, monkeypatch):
+    from app.models.db import session_factory as make_session_factory
+    from app.models.job import JobEvent
+
+    reset_job_manager()
+    test_settings = Settings(
+        _env_file=None,
+        jobs_data_dir=str(tmp_path / "jobs"),
+        database_url=f"sqlite:///{(tmp_path / 'test.db').as_posix()}",
+    )
+    init_db(test_settings)
+    app = create_app()
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    client = TestClient(app)
+
+    monkeypatch.setattr("app.orchestration.pipeline.mvn_effective_pom", _fast_mvn_effective_pom)
+    monkeypatch.setattr("app.orchestration.pipeline.run_combined_scan", _no_vulns_scan)
+
+    zip_content = _zip_bytes({"pom.xml": _POM})
+    create_resp = client.post(
+        "/jobs",
+        data={"run_stage1": "true", "run_stage2": "false"},
+        files={"zip_file": ("project.zip", zip_content, "application/zip")},
+    )
+    job_id = create_resp.json()["job_id"]
+    _wait_for_status(client, job_id, "awaiting_version_approval")
+
+    factory = make_session_factory(test_settings)
+    with factory() as session:
+        row = (
+            session.query(JobEvent)
+            .filter(JobEvent.job_id == job_id, JobEvent.event_type == "status")
+            .order_by(JobEvent.seq.desc())
+            .first()
+        )
+    assert row.data["status"] == "awaiting_version_approval"
+    # _fast_mvn_effective_pom writes <version>1.0.0</version>; run_stage1=True -> major bump
+    assert row.data["current_version"] == "1.0.0"
+    assert row.data["suggested_version"] == "2.0.0"
+
+    reset_job_manager()
+
+
+def test_confirm_version_unknown_job_returns_404(app_client):
+    resp = app_client.post("/jobs/does-not-exist/confirm-version", json={"output_version": "2.0.0"})
+    assert resp.status_code == 404
+
+
+def test_confirm_version_when_not_awaiting_returns_409(app_client):
+    zip_content = _zip_bytes({"pom.xml": _POM})
+    create_resp = app_client.post(
+        "/jobs",
+        data={"run_stage1": "false", "run_stage2": "false"},
+        files={"zip_file": ("project.zip", zip_content, "application/zip")},
+    )
+    job_id = create_resp.json()["job_id"]
+    _wait_for_terminal_status(app_client, job_id)  # Stage 0 skipped entirely, ends "success" directly
+
+    resp = app_client.post(f"/jobs/{job_id}/confirm-version", json={"output_version": "2.0.0"})
+    assert resp.status_code == 409
+
+
+def test_confirm_version_with_same_value_returns_409(app_client, monkeypatch):
+    monkeypatch.setattr("app.orchestration.pipeline.mvn_effective_pom", _fast_mvn_effective_pom)
+    monkeypatch.setattr("app.orchestration.pipeline.run_combined_scan", _no_vulns_scan)
+
+    zip_content = _zip_bytes({"pom.xml": _POM})
+    create_resp = app_client.post(
+        "/jobs",
+        data={"run_stage1": "true", "run_stage2": "false"},
+        files={"zip_file": ("project.zip", zip_content, "application/zip")},
+    )
+    job_id = create_resp.json()["job_id"]
+    _wait_for_status(app_client, job_id, "awaiting_version_approval")
+
+    resp = app_client.post(f"/jobs/{job_id}/confirm-version", json={"output_version": "1.0.0"})  # same as current
+    assert resp.status_code == 409
+    assert app_client.get(f"/jobs/{job_id}").json()["status"] == "awaiting_version_approval"
+
+
+def test_confirm_version_with_different_value_proceeds_and_persists_output_version(app_client, monkeypatch):
+    monkeypatch.setattr("app.orchestration.pipeline.mvn_effective_pom", _fast_mvn_effective_pom)
+    monkeypatch.setattr("app.orchestration.pipeline.run_combined_scan", _no_vulns_scan)
+    monkeypatch.setattr("app.orchestration.pipeline.apply_output_version", _fast_apply_output_version)
+
+    zip_content = _zip_bytes({"pom.xml": _POM})
+    create_resp = app_client.post(
+        "/jobs",
+        data={"run_stage1": "false", "run_stage2": "true"},
+        files={"zip_file": ("project.zip", zip_content, "application/zip")},
+    )
+    job_id = create_resp.json()["job_id"]
+    _wait_for_status(app_client, job_id, "awaiting_version_approval")
+
+    resp = app_client.post(f"/jobs/{job_id}/confirm-version", json={"output_version": "2.0.0"})
+    assert resp.status_code == 200
+
+    final = _wait_for_terminal_status(app_client, job_id)
+    assert final["output_version"] == "2.0.0"
+
+
+def test_cancel_awaiting_version_approval_finalizes_immediately(app_client, monkeypatch):
+    monkeypatch.setattr("app.orchestration.pipeline.mvn_effective_pom", _fast_mvn_effective_pom)
+    monkeypatch.setattr("app.orchestration.pipeline.run_combined_scan", _no_vulns_scan)
+
+    zip_content = _zip_bytes({"pom.xml": _POM})
+    create_resp = app_client.post(
+        "/jobs",
+        data={"run_stage1": "true", "run_stage2": "false"},
+        files={"zip_file": ("project.zip", zip_content, "application/zip")},
+    )
+    job_id = create_resp.json()["job_id"]
+    _wait_for_status(app_client, job_id, "awaiting_version_approval")
+
+    resp = app_client.post(f"/jobs/{job_id}/cancel")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "cancelled"
+    assert app_client.get(f"/jobs/{job_id}").json()["status"] == "cancelled"
+
+
+def test_stage2_only_job_reuses_baseline_scan_not_rescan(app_client, monkeypatch):
+    call_count = {"n": 0}
+
+    async def counting_scan(work_dir, output_dir, settings_):
+        call_count["n"] += 1
+        return []
+
+    monkeypatch.setattr("app.orchestration.pipeline.mvn_effective_pom", _fast_mvn_effective_pom)
+    monkeypatch.setattr("app.orchestration.pipeline.run_combined_scan", counting_scan)
+    monkeypatch.setattr("app.orchestration.pipeline.apply_output_version", _fast_apply_output_version)
+
+    zip_content = _zip_bytes({"pom.xml": _POM})
+    create_resp = app_client.post(
+        "/jobs",
+        data={"run_stage1": "false", "run_stage2": "true"},
+        files={"zip_file": ("project.zip", zip_content, "application/zip")},
+    )
+    job_id = create_resp.json()["job_id"]
+    _wait_for_status(app_client, job_id, "awaiting_version_approval")
+    assert call_count["n"] == 1  # Stage 0 baseline only so far
+
+    resp = app_client.post(f"/jobs/{job_id}/confirm-version", json={"output_version": "2.0.0"})
+    assert resp.status_code == 200
+    _wait_for_terminal_status(app_client, job_id)
+
+    # baseline (Stage 0) + final (post-Stage-2) -- no separate scan to pick
+    # Stage 2's targets, reused from the baseline event instead.
+    assert call_count["n"] == 2
+
+
+def test_stage1_and_stage2_job_scans_exactly_three_times(app_client, monkeypatch):
+    from app.orchestration.multi_step import MigrationRunResult
+    from app.orchestration.planning import MigrationPlan
+
+    call_count = {"n": 0}
+
+    async def counting_scan(work_dir, output_dir, settings_):
+        call_count["n"] += 1
+        return []
+
+    async def stage1_no_gap(job_id, work_dir, detected, baseline, settings_, on_log=None):
+        return MigrationRunResult(
+            plan=MigrationPlan(steps=[]),
+            outcomes=[],
+            status="no_gap",
+            final_diff="",
+            report="# stage1 report\n변경 없음.",
+            handoff_guide=None,
+        )
+
+    monkeypatch.setattr("app.orchestration.pipeline.mvn_effective_pom", _fast_mvn_effective_pom)
+    monkeypatch.setattr("app.orchestration.pipeline.run_combined_scan", counting_scan)
+    monkeypatch.setattr("app.orchestration.pipeline.apply_output_version", _fast_apply_output_version)
+    monkeypatch.setattr("app.orchestration.pipeline.run_stage1_migration", stage1_no_gap)
+
+    zip_content = _zip_bytes({"pom.xml": _POM})
+    create_resp = app_client.post(
+        "/jobs",
+        data={"run_stage1": "true", "run_stage2": "true"},
+        files={"zip_file": ("project.zip", zip_content, "application/zip")},
+    )
+    job_id = create_resp.json()["job_id"]
+    _wait_for_status(app_client, job_id, "awaiting_version_approval")
+    assert call_count["n"] == 1  # Stage 0 baseline
+
+    resp = app_client.post(f"/jobs/{job_id}/confirm-version", json={"output_version": "2.0.0"})
+    assert resp.status_code == 200
+    _wait_for_terminal_status(app_client, job_id)
+
+    # baseline (Stage 0) + post-Stage-1 (Stage 2's targets) + post-Stage-2 (final) = 3
+    assert call_count["n"] == 3
 
 
 def test_delete_unknown_job_returns_404(app_client):
@@ -416,6 +661,7 @@ def test_delete_running_job_returns_409(tmp_path, monkeypatch):
             await asyncio.sleep(0.02)
         return []
 
+    monkeypatch.setattr("app.orchestration.pipeline.mvn_effective_pom", _fast_mvn_effective_pom)
     monkeypatch.setattr("app.orchestration.pipeline.run_combined_scan", blocking_scan)
 
     with TestClient(app) as client:
@@ -432,7 +678,9 @@ def test_delete_running_job_returns_409(tmp_path, monkeypatch):
         assert resp.status_code == 409
 
         release_scan.set()
-        _wait_for_terminal_status(client, job_id)
+        # Stage 0 pauses at awaiting_version_approval (not terminal) once the
+        # scan finishes -- just let it get there before the app tears down.
+        _wait_for_status(client, job_id, "awaiting_version_approval")
 
     reset_job_manager()
 

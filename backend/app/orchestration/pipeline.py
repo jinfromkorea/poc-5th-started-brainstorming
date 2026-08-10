@@ -1,7 +1,15 @@
-"""The actual end-to-end run: ingest -> (optional output version) -> Stage 1
--> Stage 2 -> diff/report/handoff files, with progress emitted throughout
-via streaming.events.emit_event and the Job row's status kept current in
-the DB. This is what concurrency.JobManager schedules per job.
+"""The actual end-to-end run: ingest -> Stage 0 -> Stage 1 -> Stage 2 ->
+diff/report/handoff files, with progress emitted throughout via
+streaming.events.emit_event and the Job row's status kept current in the
+DB. This is what concurrency.JobManager schedules per job.
+
+run_pipeline only covers ingest + Stage 0 (mvn effective-pom analysis,
+baseline vuln scan, output-version proposal) -- if either stage was
+requested, it stops at status="awaiting_version_approval" and waits for a
+human to call POST /jobs/{id}/confirm-version, which schedules
+run_pipeline_resume_after_version_confirm (spec: docs/superpowers/specs/
+2026-08-10-stage0-version-scan-restructure-design.md). That function does
+the rest: apply the confirmed version, then Stage 1, then Stage 2.
 
 If Stage 1 ends needs_handoff and Stage 2 was requested, the pipeline does
 NOT auto-continue into Stage 2 -- it stops at status="awaiting_approval" and
@@ -26,16 +34,18 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.checkpoint.git_repo import current_head, diff_since, resolve_ingest_baseline
 from app.config import Settings
 from app.ingest.errors import IngestError
+from app.ingest.maven_detect import read_declared_version
 from app.ingest.workspace import SourceSpec, ingest
-from app.models.job import Job, TERMINAL_JOB_STATUSES
+from app.models.job import Job, JobEvent, TERMINAL_JOB_STATUSES
 from app.mvnrewrite.mvn_client import mvn_effective_pom
 from app.mvnrewrite.pom_parser import extract_versions
 from app.mvnrewrite.subprocess_runner import build_log_path
 from app.orchestration.multi_step import run_stage1_migration
 from app.orchestration.stage2_loop import run_stage2_patches
 from app.scan.combined import run_combined_scan
+from app.scan.merge import Vulnerability
 from app.streaming.events import emit_event
-from app.versioning.artifact_version import apply_output_version
+from app.versioning.artifact_version import apply_output_version, compute_stage0_output_version
 
 logger = logging.getLogger(__name__)
 
@@ -125,16 +135,17 @@ async def _run_stage2_block(
     baseline: str,
     handoff_dir: Path,
     settings: Settings,
+    vulns: list[Vulnerability],
 ) -> tuple[str, bool]:
-    """Scan + patch. Returns (report section text, needs_handoff). Shared by
-    run_pipeline (the normal same-run path) and run_pipeline_resume_stage2
-    (the HITL-approved continuation) -- identical either way."""
-    await log("2단계 취약점 스캔 시작 (패치 대상 선정)")
-    scan_started_at = time.monotonic()
-    vulns = await run_combined_scan(work_dir, output_dir, settings)
+    """Patch + final verification scan. Returns (report section text,
+    needs_handoff). Shared by run_pipeline_resume_after_version_confirm and
+    run_pipeline_resume_stage2 (the HITL-approved continuation) -- identical
+    either way. Unlike before, this no longer scans to build its own patch-
+    target list -- the caller already has one (either a fresh scan, or Stage
+    0's baseline scan reused when Stage 1 didn't run), so scanning here too
+    would just re-scan an unchanged work/ (spec: docs/superpowers/specs/
+    2026-08-10-stage0-version-scan-restructure-design.md)."""
     await emit("vulnerabilities", {"vulnerabilities": [asdict(v) for v in vulns]})
-    scan_elapsed = time.monotonic() - scan_started_at
-    await log(f"2단계 취약점 스캔 완료 ({scan_elapsed:.1f}s)")
     await log(f"{len(vulns)}개 취약점 발견 (임계값 이상, 패치 대상)")
 
     stage2_result = await run_stage2_patches(job_id, work_dir, vulns, baseline, settings, on_log=log)
@@ -150,18 +161,29 @@ async def _run_stage2_block(
             (handoff_dir / f"stage2-{safe_cve}-guide.md").write_text(outcome.handoff_guide, encoding="utf-8")
             needs_handoff = True
 
+    await log("2단계 패치 후 최종 취약점 재스캔")
+    final_vulns = await run_combined_scan(work_dir, output_dir, settings)
+    await emit("vulnerabilities_final", {"vulnerabilities": [asdict(v) for v in final_vulns]})
+    await log(f"{len(final_vulns)}개 취약점 남음 (최종)")
+
     return stage2_result.report, needs_handoff
 
 
 async def run_pipeline(
     job_id: str,
     spec: SourceSpec,
-    output_version: str | None,
     run_stage1: bool,
     run_stage2: bool,
     settings: Settings,
     session_factory: sessionmaker[Session],
 ) -> None:
+    """Ingest + Stage 0 only. If neither stage was requested, finalizes
+    immediately (nothing to version/scan). Otherwise stops at
+    "awaiting_version_approval" once Stage 0's analysis is done -- the rest
+    (apply the confirmed version, Stage 1, Stage 2) happens in
+    run_pipeline_resume_after_version_confirm, scheduled by POST
+    /jobs/{id}/confirm-version (spec: docs/superpowers/specs/2026-08-10-
+    stage0-version-scan-restructure-design.md)."""
     emit, log = make_emit_log(session_factory, job_id)
 
     await set_job_status(session_factory, job_id, "running")
@@ -175,79 +197,44 @@ async def run_pipeline(
         baseline = ingest_result.baseline_commit
         await log(f"모듈 {len(ingest_result.detection.modules)}개, baseline={baseline[:12]}")
 
-        if output_version:
-            await log(f"출력 아티팩트 버전 설정: {output_version}")
-            baseline = await apply_output_version(work_dir, output_version, settings, output_dir=output_dir)
-
-        report_sections: list[str] = []
-        handoff_dir = output_dir / "handoff"
-        needs_handoff = False
-
-        if run_stage1:
-            await log("마이그레이션 전 취약점 스캔 시작")
-            baseline_scan_started_at = time.monotonic()
-            baseline_vulns = await run_combined_scan(work_dir, output_dir, settings)
-            await emit("vulnerabilities_baseline", {"vulnerabilities": [asdict(v) for v in baseline_vulns]})
-            baseline_scan_elapsed = time.monotonic() - baseline_scan_started_at
-            await log(f"마이그레이션 전 취약점 스캔 완료 ({baseline_scan_elapsed:.1f}s)")
-            await log(f"{len(baseline_vulns)}개 취약점 발견 (임계값 이상, 마이그레이션 전)")
-
-            await log("1단계 스택 마이그레이션 시작")
-            effective_pom_path = output_dir / "effective-pom.xml"
-            await mvn_effective_pom(
-                work_dir, effective_pom_path, settings, log_path=build_log_path(output_dir, "ingest", "mvn-effective-pom")
-            )
-            detected = extract_versions(effective_pom_path)
-            await emit("inventory", asdict(detected))
-
-            stage1_result = await run_stage1_migration(job_id, work_dir, detected, baseline, settings, on_log=log)
-            # Keep baseline in sync with whatever Stage 1 actually left in
-            # work/ (spec: docs/superpowers/specs/2026-08-09-stage2-
-            # baseline-drift-design.md) -- regardless of no_gap/success/
-            # needs_handoff, this HEAD is the correct floor for Stage 2's
-            # own rollback to protect. Without this, Stage 2's first failed
-            # CVE would reset all the way back to before Stage 1 ran,
-            # wiping out every checkpoint Stage 1 already committed.
-            baseline = current_head(work_dir, settings)
-            report_sections.append(stage1_result.report)
-            await log(f"1단계 종료: {stage1_result.status}")
-
-            if stage1_result.status == "needs_handoff" and stage1_result.handoff_guide:
-                handoff_dir.mkdir(parents=True, exist_ok=True)
-                (handoff_dir / "stage1-guide.md").write_text(stage1_result.handoff_guide, encoding="utf-8")
-                needs_handoff = True
-
-        # A Stage 1 gap doesn't stop mattering just because Stage 2 is about
-        # to run on top of it -- pause for a human to explicitly opt into
-        # continuing, rather than silently barreling into Stage 2 next.
-        awaiting_stage2_approval = run_stage1 and needs_handoff and run_stage2
-
-        if run_stage2 and not awaiting_stage2_approval:
-            stage2_report, stage2_needs_handoff = await _run_stage2_block(
-                emit, log, job_id, work_dir, output_dir, baseline, handoff_dir, settings
-            )
-            report_sections.append(stage2_report)
-            needs_handoff = needs_handoff or stage2_needs_handoff
-
-        if awaiting_stage2_approval:
-            diff_text = diff_since(work_dir, settings, ingest_result.baseline_commit)
+        if not (run_stage1 or run_stage2):
+            await log("결과물 생성 중...")
+            diff_text = diff_since(work_dir, settings, baseline)
             (output_dir / "patch.diff").write_text(diff_text, encoding="utf-8")
-            partial_report = "\n\n---\n\n".join(report_sections)
-            (output_dir / "report.md").write_text(partial_report, encoding="utf-8")
-            await set_job_status(session_factory, job_id, "awaiting_approval", report_markdown=partial_report)
-            await emit("status", {"status": "awaiting_approval"})
+            (output_dir / "report.md").write_text("변경 사항 없음.", encoding="utf-8")
+            await set_job_status(session_factory, job_id, "success", report_markdown="변경 사항 없음.")
+            await emit("status", {"status": "success"})
             return
 
-        await log("결과물 생성 중...")
-        diff_text = diff_since(work_dir, settings, ingest_result.baseline_commit)
-        (output_dir / "patch.diff").write_text(diff_text, encoding="utf-8")
+        await log("Stage 0: 현재 버전/스택 분석 시작")
+        effective_pom_path = output_dir / "effective-pom.xml"
+        await mvn_effective_pom(
+            work_dir, effective_pom_path, settings, log_path=build_log_path(output_dir, "ingest", "mvn-effective-pom")
+        )
+        detected = extract_versions(effective_pom_path)
+        await emit("inventory", asdict(detected))
 
-        final_report = "\n\n---\n\n".join(report_sections) if report_sections else "변경 사항 없음."
-        (output_dir / "report.md").write_text(final_report, encoding="utf-8")
+        current_version, _version_source = read_declared_version(effective_pom_path)
+        suggested_version = compute_stage0_output_version(current_version, run_stage1) if current_version else None
 
-        final_status = "needs_handoff" if needs_handoff else "success"
-        await set_job_status(session_factory, job_id, final_status, report_markdown=final_report)
-        await emit("status", {"status": final_status})
+        await log("마이그레이션 전 취약점 스캔 시작")
+        baseline_scan_started_at = time.monotonic()
+        baseline_vulns = await run_combined_scan(work_dir, output_dir, settings)
+        await emit("vulnerabilities_baseline", {"vulnerabilities": [asdict(v) for v in baseline_vulns]})
+        baseline_scan_elapsed = time.monotonic() - baseline_scan_started_at
+        await log(f"마이그레이션 전 취약점 스캔 완료 ({baseline_scan_elapsed:.1f}s)")
+        await log(f"{len(baseline_vulns)}개 취약점 발견 (임계값 이상, 마이그레이션 전)")
+
+        await set_job_status(session_factory, job_id, "awaiting_version_approval")
+        await emit(
+            "status",
+            {
+                "status": "awaiting_version_approval",
+                "current_version": current_version,
+                "suggested_version": suggested_version,
+            },
+        )
+        return
 
     except IngestError as exc:
         await set_job_status(session_factory, job_id, "failed", error_message=str(exc))
@@ -258,6 +245,125 @@ async def run_pipeline(
         # branch below (CancelledError isn't an Exception subclass anyway,
         # but the separation also documents the intent). Re-raise so the
         # Task actually ends up cancelled, not merely "returned".
+        await _finalize_cancelled(job_id, settings, session_factory)
+        raise
+    except Exception as exc:  # noqa: BLE001 -- a job failure must never crash the server process
+        await set_job_status(session_factory, job_id, "failed", error_message=str(exc))
+        await emit("status", {"status": "failed", "error": str(exc)})
+
+
+def _latest_event_data(session_factory: sessionmaker[Session], job_id: str, event_type: str) -> dict | None:
+    """Reads back the most recent persisted JobEvent of a given type for a
+    job -- used to reuse Stage 0's baseline vulnerability scan as Stage 2's
+    patch-target list when Stage 1 didn't run (so work/ never changed since
+    that scan), instead of paying for a redundant re-scan."""
+    with session_factory() as session:
+        row = (
+            session.query(JobEvent)
+            .filter(JobEvent.job_id == job_id, JobEvent.event_type == event_type)
+            .order_by(JobEvent.seq.desc())
+            .first()
+        )
+        return row.data if row is not None else None
+
+
+async def run_pipeline_resume_after_version_confirm(
+    job_id: str,
+    confirmed_version: str,
+    settings: Settings,
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Scheduled by POST /jobs/{id}/confirm-version for a job sitting at
+    status="awaiting_version_approval". work_dir is exactly as Stage 0 left
+    it (baseline commit only, nothing else touched yet)."""
+    emit, log = make_emit_log(session_factory, job_id)
+
+    with session_factory() as session:
+        job = session.get(Job, job_id)
+        run_stage1, run_stage2 = job.run_stage1, job.run_stage2
+
+    work_dir = settings.jobs_dir / job_id / "work"
+    output_dir = settings.jobs_dir / job_id / "output"
+    handoff_dir = output_dir / "handoff"
+    ingest_baseline = resolve_ingest_baseline(work_dir, settings)
+
+    await set_job_status(session_factory, job_id, "running")
+    await emit("status", {"status": "running"})
+
+    try:
+        await log(f"출력 아티팩트 버전 설정: {confirmed_version}")
+        baseline = await apply_output_version(work_dir, confirmed_version, settings, output_dir=output_dir)
+        with session_factory() as session:
+            job = session.get(Job, job_id)
+            job.output_version = confirmed_version
+            session.commit()
+
+        detected = extract_versions(output_dir / "effective-pom.xml")  # Stage 0가 이미 만들어둔 파일 재사용
+
+        report_sections: list[str] = []
+        needs_handoff = False
+        stage2_vulns: list[Vulnerability] = []
+
+        if run_stage1:
+            await log("1단계 스택 마이그레이션 시작")
+            stage1_result = await run_stage1_migration(job_id, work_dir, detected, baseline, settings, on_log=log)
+            # Keep baseline in sync with whatever Stage 1 actually left in
+            # work/ (spec: docs/superpowers/specs/2026-08-09-stage2-
+            # baseline-drift-design.md) -- regardless of no_gap/success/
+            # needs_handoff, this HEAD is the correct floor for Stage 2's
+            # own rollback to protect.
+            baseline = current_head(work_dir, settings)
+            report_sections.append(stage1_result.report)
+            await log(f"1단계 종료: {stage1_result.status}")
+
+            if stage1_result.status == "needs_handoff" and stage1_result.handoff_guide:
+                handoff_dir.mkdir(parents=True, exist_ok=True)
+                (handoff_dir / "stage1-guide.md").write_text(stage1_result.handoff_guide, encoding="utf-8")
+                needs_handoff = True
+
+            if run_stage2 and not needs_handoff:
+                await log("1단계 이후 취약점 재스캔")
+                stage2_vulns = await run_combined_scan(work_dir, output_dir, settings)
+        elif run_stage2:
+            # Stage 1을 안 돌렸으므로 work/는 Stage 0의 베이스라인 스캔 이후
+            # 안 바뀌었다(버전 적용은 의존성을 안 건드림) -- 재스캔 대신 그
+            # 결과를 재사용한다.
+            baseline_data = _latest_event_data(session_factory, job_id, "vulnerabilities_baseline")
+            stage2_vulns = [Vulnerability(**v) for v in baseline_data["vulnerabilities"]] if baseline_data else []
+
+        # A Stage 1 gap doesn't stop mattering just because Stage 2 is about
+        # to run on top of it -- pause for a human to explicitly opt into
+        # continuing, rather than silently barreling into Stage 2 next.
+        awaiting_stage2_approval = run_stage1 and needs_handoff and run_stage2
+
+        if run_stage2 and not awaiting_stage2_approval:
+            stage2_report, stage2_needs_handoff = await _run_stage2_block(
+                emit, log, job_id, work_dir, output_dir, baseline, handoff_dir, settings, stage2_vulns
+            )
+            report_sections.append(stage2_report)
+            needs_handoff = needs_handoff or stage2_needs_handoff
+
+        if awaiting_stage2_approval:
+            diff_text = diff_since(work_dir, settings, ingest_baseline)
+            (output_dir / "patch.diff").write_text(diff_text, encoding="utf-8")
+            partial_report = "\n\n---\n\n".join(report_sections)
+            (output_dir / "report.md").write_text(partial_report, encoding="utf-8")
+            await set_job_status(session_factory, job_id, "awaiting_approval", report_markdown=partial_report)
+            await emit("status", {"status": "awaiting_approval"})
+            return
+
+        await log("결과물 생성 중...")
+        diff_text = diff_since(work_dir, settings, ingest_baseline)
+        (output_dir / "patch.diff").write_text(diff_text, encoding="utf-8")
+
+        final_report = "\n\n---\n\n".join(report_sections) if report_sections else "변경 사항 없음."
+        (output_dir / "report.md").write_text(final_report, encoding="utf-8")
+
+        final_status = "needs_handoff" if needs_handoff else "success"
+        await set_job_status(session_factory, job_id, final_status, report_markdown=final_report)
+        await emit("status", {"status": final_status})
+
+    except asyncio.CancelledError:
         await _finalize_cancelled(job_id, settings, session_factory)
         raise
     except Exception as exc:  # noqa: BLE001 -- a job failure must never crash the server process
@@ -291,8 +397,10 @@ async def run_pipeline_resume_stage2(job_id: str, settings: Settings, session_fa
     await emit("status", {"status": "running"})
 
     try:
+        await log("취약점 재스캔 (2단계 패치 대상 선정)")
+        vulns = await run_combined_scan(work_dir, output_dir, settings)
         stage2_report, _stage2_needs_handoff = await _run_stage2_block(
-            emit, log, job_id, work_dir, output_dir, stage_baseline, handoff_dir, settings
+            emit, log, job_id, work_dir, output_dir, stage_baseline, handoff_dir, settings, vulns
         )
 
         await log("결과물 생성 중...")

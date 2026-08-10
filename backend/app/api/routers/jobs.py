@@ -16,12 +16,18 @@ from sse_starlette.sse import EventSourceResponse
 from app.api.deps import require_api_token
 from app.checkpoint.git_repo import rmtree_clear_readonly
 from app.config import Settings, get_settings
+from app.ingest.maven_detect import read_declared_version
 from app.ingest.workspace import GitSourceSpec, ZipSourceSpec
 from app.models.db import get_db_session, session_factory
 from app.models.job import TERMINAL_JOB_STATUSES, Job, JobEvent, next_job_id
 from app.orchestration.concurrency import get_job_manager
-from app.orchestration.pipeline import _finalize_cancelled, run_pipeline, run_pipeline_resume_stage2
-from app.schemas.job import JobCreateResponse, JobStatusResponse
+from app.orchestration.pipeline import (
+    _finalize_cancelled,
+    run_pipeline,
+    run_pipeline_resume_after_version_confirm,
+    run_pipeline_resume_stage2,
+)
+from app.schemas.job import ConfirmVersionRequest, JobCreateResponse, JobStatusResponse
 from app.streaming.sse import stream_job_events
 
 router = APIRouter(prefix="/jobs", tags=["jobs"], dependencies=[Depends(require_api_token)])
@@ -31,7 +37,6 @@ router = APIRouter(prefix="/jobs", tags=["jobs"], dependencies=[Depends(require_
 async def create_job(
     git_url: Annotated[str | None, Form()] = None,
     git_ref: Annotated[str | None, Form()] = None,
-    output_version: Annotated[str | None, Form()] = None,
     run_stage1: Annotated[bool, Form()] = True,
     run_stage2: Annotated[bool, Form()] = False,
     zip_file: Annotated[UploadFile | None, File()] = None,
@@ -61,7 +66,6 @@ async def create_job(
         id=job_id,
         source_type=source_type,
         source_ref=source_ref,
-        output_version=output_version,
         run_stage1=run_stage1,
         run_stage2=run_stage2,
         status="queued",
@@ -73,7 +77,7 @@ async def create_job(
     manager = get_job_manager(settings.max_concurrent_repos)
     manager.start(
         job_id,
-        lambda: run_pipeline(job_id, spec, output_version, run_stage1, run_stage2, settings, factory),
+        lambda: run_pipeline(job_id, spec, run_stage1, run_stage2, settings, factory),
         on_queued_cancel=lambda: _finalize_cancelled(job_id, settings, factory),
     )
 
@@ -123,6 +127,44 @@ async def get_job(job_id: str, db=Depends(get_db_session)) -> JobStatusResponse:
     )
 
 
+@router.post("/{job_id}/confirm-version", response_model=JobCreateResponse)
+async def confirm_version(
+    job_id: str,
+    body: ConfirmVersionRequest,
+    settings: Settings = Depends(get_settings),
+    db=Depends(get_db_session),
+) -> JobCreateResponse:
+    """Resumes a job paused at status="awaiting_version_approval" (Stage 0
+    finished its analysis and proposed an output version) -- spec:
+    docs/superpowers/specs/2026-08-10-stage0-version-scan-restructure-
+    design.md. Rejects a confirmed value equal to the current version to
+    enforce "never re-publish the same artifact version"."""
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"unknown job_id: {job_id}")
+    if job.status != "awaiting_version_approval":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"job {job_id} is not awaiting version approval (status={job.status})",
+        )
+
+    effective_pom_path = settings.jobs_dir / job_id / "output" / "effective-pom.xml"
+    current_version, _source = read_declared_version(effective_pom_path)
+    if body.output_version == current_version:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"output version must differ from the current version ({current_version})",
+        )
+
+    factory = session_factory(settings)
+    manager = get_job_manager(settings.max_concurrent_repos)
+    manager.start(
+        job_id, lambda: run_pipeline_resume_after_version_confirm(job_id, body.output_version, settings, factory)
+    )
+
+    return JobCreateResponse(job_id=job_id, status="running")
+
+
 @router.post("/{job_id}/proceed", response_model=JobCreateResponse)
 async def proceed_job(
     job_id: str,
@@ -169,7 +211,7 @@ async def cancel_job(
     factory = session_factory(settings)
     manager = get_job_manager(settings.max_concurrent_repos)
 
-    if job.status == "awaiting_approval":
+    if job.status in ("awaiting_approval", "awaiting_version_approval"):
         # run_pipeline already returned after pausing here -- there's no
         # live Task to cancel and nothing running to kill.
         await _finalize_cancelled(job_id, settings, factory)

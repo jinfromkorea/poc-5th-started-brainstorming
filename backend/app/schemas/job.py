@@ -10,6 +10,10 @@ class JobCreateResponse(BaseModel):
     status: str
 
 
+class ConfirmVersionRequest(BaseModel):
+    output_version: str
+
+
 class JobStatusResponse(BaseModel):
     job_id: str
     status: str

@@ -21,7 +21,7 @@ from app.models.db import init_db, session_factory
 from app.models.job import Job, JobEvent
 from app.mvnrewrite.pom_parser import DetectedVersions
 from app.orchestration.multi_step import MigrationRunResult
-from app.orchestration.pipeline import run_pipeline, run_pipeline_resume_stage2
+from app.orchestration.pipeline import run_pipeline, run_pipeline_resume_after_version_confirm, run_pipeline_resume_stage2
 from app.orchestration.planning import MigrationPlan
 from app.orchestration.stage2_loop import Stage2RunResult
 from app.scan.merge import Vulnerability
@@ -48,9 +48,18 @@ def job_paths(tmp_path):
     return paths
 
 
-def _create_job(db, job_id: str) -> None:
+def _create_job(db, job_id: str, run_stage1: bool = True, run_stage2: bool = False) -> None:
     with db() as session:
-        session.add(Job(id=job_id, source_type="zip", source_ref="x.zip", status="queued"))
+        session.add(
+            Job(
+                id=job_id,
+                source_type="zip",
+                source_ref="x.zip",
+                status="queued",
+                run_stage1=run_stage1,
+                run_stage2=run_stage2,
+            )
+        )
         session.commit()
 
 
@@ -69,7 +78,16 @@ def _commit_subjects(work_dir) -> str:
 
 
 async def test_stage1_only_success_writes_report_and_diff(monkeypatch, settings, db, job_paths):
-    _create_job(db, "job-1")
+    # run_pipeline_resume_after_version_confirm derives work_dir/output_dir
+    # as settings.jobs_dir / job_id / {work,output} independently of what
+    # run_pipeline was given (it's resumed from a fresh POST, not a
+    # continuation in the same call) -- job_id and settings.jobs_data_dir
+    # must line up with job_paths for those derived paths to land on the
+    # directories job_paths already created (same pattern as the existing
+    # run_pipeline_resume_stage2 tests below).
+    job_id = job_paths.root.name
+    settings.jobs_data_dir = str(job_paths.root.parent)
+    _create_job(db, job_id)
     ingest_sha = git_init_and_baseline_commit(job_paths.work, settings)
 
     monkeypatch.setattr(
@@ -100,12 +118,12 @@ async def test_stage1_only_success_writes_report_and_diff(monkeypatch, settings,
         )
 
     monkeypatch.setattr("app.orchestration.pipeline.run_stage1_migration", fake_stage1)
+    monkeypatch.setattr("app.orchestration.pipeline.apply_output_version", _fake_apply_output_version)
     monkeypatch.setattr("app.orchestration.pipeline.diff_since", lambda work_dir, settings_, baseline: "diff --git a/pom.xml b/pom.xml\n")
 
     await run_pipeline(
-        job_id="job-1",
+        job_id=job_id,
         spec=ZipSourceSpec(zip_path=job_paths.root / "fake.zip"),
-        output_version=None,
         run_stage1=True,
         run_stage2=False,
         settings=settings,
@@ -113,16 +131,13 @@ async def test_stage1_only_success_writes_report_and_diff(monkeypatch, settings,
     )
 
     with db() as session:
-        job = session.get(Job, "job-1")
-        assert job.status == "success"
-        assert "stage1 report" in job.report_markdown
+        job = session.get(Job, job_id)
+        assert job.status == "awaiting_version_approval"
 
-        events = session.query(JobEvent).filter_by(job_id="job-1").order_by(JobEvent.seq).all()
+        events = session.query(JobEvent).filter_by(job_id=job_id).order_by(JobEvent.seq).all()
         event_types = [e.event_type for e in events]
         assert event_types[0] == "status"
         assert events[0].data == {"status": "running"}
-        assert event_types[-1] == "status"
-        assert events[-1].data == {"status": "success"}
 
         inventory_events = [e for e in events if e.event_type == "inventory"]
         assert len(inventory_events) == 1
@@ -148,9 +163,25 @@ async def test_stage1_only_success_writes_report_and_diff(monkeypatch, settings,
                 }
             ]
         }
-        # the baseline scan (run whenever stage1 runs) must come before stage1
-        # actually migrates anything -- confirmed by event order, not just presence
-        assert event_types.index("vulnerabilities_baseline") < event_types.index("inventory")
+        # Stage 0 runs the mvn effective-pom analysis (-> inventory) before
+        # the baseline scan -- it needs that analysis to compute a version
+        # suggestion first.
+        assert event_types.index("inventory") < event_types.index("vulnerabilities_baseline")
+
+    # Confirm the proposed version to let the pipeline continue into Stage 1.
+    await run_pipeline_resume_after_version_confirm(
+        job_id=job_id, confirmed_version="9.9.9", settings=settings, session_factory=db
+    )
+
+    with db() as session:
+        job = session.get(Job, job_id)
+        assert job.status == "success"
+        assert job.output_version == "9.9.9"
+        assert "stage1 report" in job.report_markdown
+
+        events = session.query(JobEvent).filter_by(job_id=job_id).order_by(JobEvent.seq).all()
+        assert events[-1].event_type == "status"
+        assert events[-1].data == {"status": "success"}
 
     assert (job_paths.output / "patch.diff").read_text(encoding="utf-8").startswith("diff --git")
     assert "stage1 report" in (job_paths.output / "report.md").read_text(encoding="utf-8")
@@ -158,7 +189,9 @@ async def test_stage1_only_success_writes_report_and_diff(monkeypatch, settings,
 
 
 async def test_stage1_needs_handoff_writes_guide_file(monkeypatch, settings, db, job_paths):
-    _create_job(db, "job-2")
+    job_id = job_paths.root.name
+    settings.jobs_data_dir = str(job_paths.root.parent)
+    _create_job(db, job_id)
     ingest_sha = git_init_and_baseline_commit(job_paths.work, settings)
 
     monkeypatch.setattr(
@@ -170,6 +203,7 @@ async def test_stage1_needs_handoff_writes_guide_file(monkeypatch, settings, db,
         "app.orchestration.pipeline.extract_versions",
         lambda path: DetectedVersions(java_version="11", spring_boot_version="2.7.18", spring_cloud_version=None, spring_ai_version=None),
     )
+    monkeypatch.setattr("app.orchestration.pipeline.apply_output_version", _fake_apply_output_version)
 
     async def fake_baseline_scan(work_dir, output_dir, settings_):
         return []
@@ -190,9 +224,8 @@ async def test_stage1_needs_handoff_writes_guide_file(monkeypatch, settings, db,
     monkeypatch.setattr("app.orchestration.pipeline.diff_since", lambda work_dir, settings_, baseline: "")
 
     await run_pipeline(
-        job_id="job-2",
+        job_id=job_id,
         spec=ZipSourceSpec(zip_path=job_paths.root / "fake.zip"),
-        output_version=None,
         run_stage1=True,
         run_stage2=False,
         settings=settings,
@@ -200,7 +233,18 @@ async def test_stage1_needs_handoff_writes_guide_file(monkeypatch, settings, db,
     )
 
     with db() as session:
-        job = session.get(Job, "job-2")
+        job = session.get(Job, job_id)
+        assert job.status == "awaiting_version_approval"
+
+    await run_pipeline_resume_after_version_confirm(
+        job_id=job_id,
+        confirmed_version="9.9.9",
+        settings=settings,
+        session_factory=db,
+    )
+
+    with db() as session:
+        job = session.get(Job, job_id)
         assert job.status == "needs_handoff"
 
     guide_path = job_paths.output / "handoff" / "stage1-guide.md"
@@ -209,9 +253,21 @@ async def test_stage1_needs_handoff_writes_guide_file(monkeypatch, settings, db,
 
 
 async def test_stage2_only_with_vulnerabilities(monkeypatch, settings, db, job_paths):
-    _create_job(db, "job-3")
+    job_id = job_paths.root.name
+    settings.jobs_data_dir = str(job_paths.root.parent)
+    _create_job(db, job_id, run_stage1=False, run_stage2=True)
+    ingest_sha = git_init_and_baseline_commit(job_paths.work, settings)
 
-    monkeypatch.setattr("app.orchestration.pipeline.ingest", lambda job_id, spec, settings_: _fake_ingest_result(job_id, job_paths))
+    monkeypatch.setattr(
+        "app.orchestration.pipeline.ingest",
+        lambda job_id, spec, settings_: _fake_ingest_result(job_id, job_paths, baseline_commit=ingest_sha),
+    )
+    monkeypatch.setattr("app.orchestration.pipeline.mvn_effective_pom", _async_noop_writes_file)
+    monkeypatch.setattr(
+        "app.orchestration.pipeline.extract_versions",
+        lambda path: DetectedVersions(java_version="11", spring_boot_version="2.7.18", spring_cloud_version=None, spring_ai_version=None),
+    )
+    monkeypatch.setattr("app.orchestration.pipeline.apply_output_version", _fake_apply_output_version)
 
     vuln = Vulnerability("CVE-2026-0001", "com.example:lib", "1.0.0", "1.0.1", 8.1, "HIGH", "trivy")
 
@@ -233,9 +289,8 @@ async def test_stage2_only_with_vulnerabilities(monkeypatch, settings, db, job_p
     monkeypatch.setattr("app.orchestration.pipeline.diff_since", lambda work_dir, settings_, baseline: "")
 
     await run_pipeline(
-        job_id="job-3",
+        job_id=job_id,
         spec=GitSourceSpec(url="https://example.invalid/repo.git"),
-        output_version=None,
         run_stage1=False,
         run_stage2=True,
         settings=settings,
@@ -243,11 +298,22 @@ async def test_stage2_only_with_vulnerabilities(monkeypatch, settings, db, job_p
     )
 
     with db() as session:
-        job = session.get(Job, "job-3")
+        job = session.get(Job, job_id)
+        assert job.status == "awaiting_version_approval"
+
+    await run_pipeline_resume_after_version_confirm(
+        job_id=job_id,
+        confirmed_version="9.9.9",
+        settings=settings,
+        session_factory=db,
+    )
+
+    with db() as session:
+        job = session.get(Job, job_id)
         assert job.status == "success"
         assert "CVE-2026-0001" in job.report_markdown
 
-        events = session.query(JobEvent).filter_by(job_id="job-3").order_by(JobEvent.seq).all()
+        events = session.query(JobEvent).filter_by(job_id=job_id).order_by(JobEvent.seq).all()
         vuln_events = [e for e in events if e.event_type == "vulnerabilities"]
         assert len(vuln_events) == 1
         assert vuln_events[0].data == {
@@ -266,7 +332,9 @@ async def test_stage2_only_with_vulnerabilities(monkeypatch, settings, db, job_p
 
 
 async def test_stage1_needs_handoff_with_stage2_requested_pauses_for_approval(monkeypatch, settings, db, job_paths):
-    _create_job(db, "job-5")
+    job_id = job_paths.root.name
+    settings.jobs_data_dir = str(job_paths.root.parent)
+    _create_job(db, job_id, run_stage1=True, run_stage2=True)
     ingest_sha = git_init_and_baseline_commit(job_paths.work, settings)
 
     monkeypatch.setattr(
@@ -278,6 +346,7 @@ async def test_stage1_needs_handoff_with_stage2_requested_pauses_for_approval(mo
         "app.orchestration.pipeline.extract_versions",
         lambda path: DetectedVersions(java_version="21", spring_boot_version="4.0.0", spring_cloud_version=None, spring_ai_version=None),
     )
+    monkeypatch.setattr("app.orchestration.pipeline.apply_output_version", _fake_apply_output_version)
 
     baseline_scan_calls = {"n": 0}
 
@@ -306,11 +375,21 @@ async def test_stage1_needs_handoff_with_stage2_requested_pauses_for_approval(mo
     monkeypatch.setattr("app.orchestration.pipeline.run_stage2_patches", stage2_must_not_run)
 
     await run_pipeline(
-        job_id="job-5",
+        job_id=job_id,
         spec=ZipSourceSpec(zip_path=job_paths.root / "fake.zip"),
-        output_version=None,
         run_stage1=True,
         run_stage2=True,
+        settings=settings,
+        session_factory=db,
+    )
+
+    with db() as session:
+        job = session.get(Job, job_id)
+        assert job.status == "awaiting_version_approval"
+
+    await run_pipeline_resume_after_version_confirm(
+        job_id=job_id,
+        confirmed_version="9.9.9",
         settings=settings,
         session_factory=db,
     )
@@ -320,12 +399,12 @@ async def test_stage1_needs_handoff_with_stage2_requested_pauses_for_approval(mo
     assert baseline_scan_calls["n"] == 1
 
     with db() as session:
-        job = session.get(Job, "job-5")
+        job = session.get(Job, job_id)
         assert job.status == "awaiting_approval"
         assert "stage1 report" in job.report_markdown
         assert "stage2 report" not in job.report_markdown
 
-        event_types = [e.event_type for e in session.query(JobEvent).filter_by(job_id="job-5").order_by(JobEvent.seq).all()]
+        event_types = [e.event_type for e in session.query(JobEvent).filter_by(job_id=job_id).order_by(JobEvent.seq).all()]
         assert event_types[-1] == "status"
 
     assert (job_paths.output / "handoff" / "stage1-guide.md").exists()
@@ -397,7 +476,9 @@ async def test_stage1_success_commits_survive_a_failed_first_stage2_cve(monkeypa
     was never updated after Stage 1, so stage2_loop's reset_to_checkpoint
     (called with last_good_sha still equal to that stale, pre-Stage-1 value)
     would silently wipe out everything Stage 1 had already committed."""
-    _create_job(db, "job-14-repro")
+    job_id = job_paths.root.name
+    settings.jobs_data_dir = str(job_paths.root.parent)
+    _create_job(db, job_id, run_stage1=True, run_stage2=True)
     ingest_sha = git_init_and_baseline_commit(job_paths.work, settings)
 
     monkeypatch.setattr(
@@ -409,6 +490,7 @@ async def test_stage1_success_commits_survive_a_failed_first_stage2_cve(monkeypa
         "app.orchestration.pipeline.extract_versions",
         lambda path: DetectedVersions(java_version="21", spring_boot_version="4.1.0", spring_cloud_version=None, spring_ai_version=None),
     )
+    monkeypatch.setattr("app.orchestration.pipeline.apply_output_version", _fake_apply_output_version)
 
     async def fake_scan(work_dir, output_dir, settings_):
         return []
@@ -436,11 +518,21 @@ async def test_stage1_success_commits_survive_a_failed_first_stage2_cve(monkeypa
     monkeypatch.setattr("app.orchestration.pipeline.run_stage2_patches", fake_stage2_first_cve_fails)
 
     await run_pipeline(
-        job_id="job-14-repro",
+        job_id=job_id,
         spec=ZipSourceSpec(zip_path=job_paths.root / "fake.zip"),
-        output_version=None,
         run_stage1=True,
         run_stage2=True,
+        settings=settings,
+        session_factory=db,
+    )
+
+    with db() as session:
+        job = session.get(Job, job_id)
+        assert job.status == "awaiting_version_approval"
+
+    await run_pipeline_resume_after_version_confirm(
+        job_id=job_id,
+        confirmed_version="9.9.9",
         settings=settings,
         session_factory=db,
     )
@@ -504,6 +596,11 @@ async def test_cancel_during_run_marks_job_cancelled_and_writes_marker(monkeypat
     _create_job(db, job_id)
 
     monkeypatch.setattr("app.orchestration.pipeline.ingest", lambda job_id, spec, settings_: _fake_ingest_result(job_id, job_paths))
+    monkeypatch.setattr("app.orchestration.pipeline.mvn_effective_pom", _async_noop_writes_file)
+    monkeypatch.setattr(
+        "app.orchestration.pipeline.extract_versions",
+        lambda path: DetectedVersions(java_version="11", spring_boot_version="2.7.18", spring_cloud_version=None, spring_ai_version=None),
+    )
 
     started = asyncio.Event()
 
@@ -518,7 +615,6 @@ async def test_cancel_during_run_marks_job_cancelled_and_writes_marker(monkeypat
         run_pipeline(
             job_id=job_id,
             spec=ZipSourceSpec(zip_path=job_paths.root / "fake.zip"),
-            output_version=None,
             run_stage1=True,
             run_stage2=False,
             settings=settings,
@@ -563,7 +659,6 @@ async def test_ingest_failure_marks_job_failed(monkeypatch, settings, db, job_pa
     await run_pipeline(
         job_id="job-4",
         spec=ZipSourceSpec(zip_path=job_paths.root / "fake.zip"),
-        output_version=None,
         run_stage1=True,
         run_stage2=False,
         settings=settings,
@@ -580,3 +675,9 @@ async def _async_noop_writes_file(work_dir, output_path, settings_, log_path=Non
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("<projects><project/></projects>", encoding="utf-8")
     return output_path
+
+
+async def _fake_apply_output_version(work_dir, new_version, settings_, output_dir=None):
+    # The real apply_output_version shells out to `mvn versions:set` -- swap
+    # in a plain checkpoint commit so these are still pure control-flow tests.
+    return commit_checkpoint(work_dir, settings_, f"checkpoint: set artifact version to {new_version}")

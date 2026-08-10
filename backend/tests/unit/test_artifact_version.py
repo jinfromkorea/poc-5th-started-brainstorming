@@ -15,6 +15,7 @@ from app.versioning.artifact_version import (
     _project_group_id,
     _self_referencing_version_properties,
     apply_output_version,
+    compute_stage0_output_version,
     suggest_output_version,
 )
 
@@ -125,6 +126,26 @@ def test_suggest_output_version_leaves_other_qualifiers_unchanged():
 
 def test_suggest_output_version_leaves_four_part_version_unchanged():
     assert suggest_output_version("1.2.3.4") == "1.2.3.4"
+
+
+def test_compute_stage0_output_version_bumps_major_when_stage1_selected():
+    assert compute_stage0_output_version("1.1.1", True) == "2.0.0"
+
+
+def test_compute_stage0_output_version_bumps_minor_when_stage1_not_selected():
+    assert compute_stage0_output_version("1.0.0", False) == "1.1.0"
+
+
+def test_compute_stage0_output_version_normalizes_before_bumping():
+    assert compute_stage0_output_version("1.2.3-SNAPSHOT", True) == "2.0.0"
+
+
+def test_compute_stage0_output_version_leaves_unparseable_version_unchanged():
+    assert compute_stage0_output_version("1.2.3-RC1", True) == "1.2.3-RC1"
+
+
+def test_compute_stage0_output_version_pads_before_bumping():
+    assert compute_stage0_output_version("1.2", False) == "1.3.0"
 
 
 def _work_dir_with_pom(tmp_path, settings, pom_xml: str):

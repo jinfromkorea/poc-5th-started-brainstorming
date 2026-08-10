@@ -101,3 +101,20 @@ def suggest_output_version(declared_version: str) -> str:
     if len(parts) == 2 and all(p.isdigit() for p in parts):
         version = f"{version}.0"
     return version
+
+
+def compute_stage0_output_version(declared_version: str, run_stage1: bool) -> str:
+    """Stage 0's automatic output-version proposal: bump MAJOR if Stage 1 (a
+    real stack migration) is selected, otherwise bump MINOR -- regardless of
+    whether the stack already matches the target (spec: docs/superpowers/
+    specs/2026-08-10-stage0-version-scan-restructure-design.md). Falls back
+    to the normalized-but-unbumped value when declared_version doesn't parse
+    as MAJOR.MINOR.PATCH -- guessing wrong is worse than not guessing."""
+    normalized = suggest_output_version(declared_version)
+    parts = normalized.split(".")
+    if len(parts) != 3 or not all(p.isdigit() for p in parts):
+        return normalized
+    major, minor, _patch = (int(p) for p in parts)
+    if run_stage1:
+        return f"{major + 1}.0.0"
+    return f"{major}.{minor + 1}.0"

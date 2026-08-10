@@ -18,6 +18,13 @@ from app.models.db import Base
 # enum type and this avoids an Alembic-less migration headache if a status
 # value is ever added later.
 #
+# "awaiting_version_approval": Stage 0 finished (mvn effective-pom analysis
+# + baseline vuln scan) and computed a proposed output version -- the
+# pipeline stops before applying it or entering Stage 1/2, until a human
+# calls POST /jobs/{id}/confirm-version (spec: docs/superpowers/specs/
+# 2026-08-10-stage0-version-scan-restructure-design.md). Deliberately NOT
+# terminal, same reasoning as awaiting_approval below.
+#
 # "awaiting_approval": Stage 1 ended needs_handoff and Stage 2 was requested
 # -- the pipeline stops instead of auto-continuing into Stage 2, until a
 # human calls POST /jobs/{id}/proceed. Deliberately NOT terminal (see below)
@@ -28,7 +35,16 @@ from app.models.db import Base
 # (spec: docs/superpowers/specs/2026-08-08-job-cancellation-design.md). IS
 # terminal -- unlike awaiting_approval, nothing more will ever happen to
 # this job.
-JOB_STATUSES = ("queued", "running", "awaiting_approval", "success", "needs_handoff", "failed", "cancelled")
+JOB_STATUSES = (
+    "queued",
+    "running",
+    "awaiting_version_approval",
+    "awaiting_approval",
+    "success",
+    "needs_handoff",
+    "failed",
+    "cancelled",
+)
 TERMINAL_JOB_STATUSES = frozenset({"success", "needs_handoff", "failed", "cancelled"})
 
 
