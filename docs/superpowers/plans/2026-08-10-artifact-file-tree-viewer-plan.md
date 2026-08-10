@@ -304,6 +304,8 @@ if (!jobId) {
 
 **[구현 후 추가 변경]** jsTree 전환 직후엔 폴더 노드에 `state: { opened: true }`를 줘서 기존(`<details open>`) 기본 펼침 정책을 유지했으나, 이후 사용자 요청으로 기본 접힘으로 다시 바꿨다(`state` 속성 자체를 제거 — jsTree 기본값이 이미 닫힘이므로). §4 결정 사항의 "기본값은 펼침"은 더 이상 유효하지 않다.
 
+**[구현 후 추가 변경]** 기본 접힘 상태에서 폴더를 하나씩 펼치는 게 번거롭다는 후속 요청으로, `files.html`의 `tree-panel`에 "전체 펼치기"/"전체 접기" 버튼(`artifact-buttons` 클래스 재사용)을 추가했다. `files.js`에서 각각 `$("#file-tree").jstree("open_all")` / `.jstree("close_all")`을 호출한다 (jsTree 내장 인스턴스 메서드, 별도 구현 불필요).
+
 ## 6. `assets/app.css` — 레이아웃 스타일
 
 ```css

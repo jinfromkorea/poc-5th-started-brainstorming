@@ -1,6 +1,8 @@
 "use strict";
 
 const treeError = el("tree-error");
+const expandAllBtn = el("expand-all-btn");
+const collapseAllBtn = el("collapse-all-btn");
 const fileViewerPanel = el("file-viewer-panel");
 const fileViewerTitle = el("file-viewer-title");
 const fileBefore = el("file-before");
@@ -69,6 +71,9 @@ async function loadTree() {
       const path = data.node.li_attr && data.node.li_attr["data-path"];
       if (path) loadFileDiff(path);
     });
+
+  expandAllBtn.addEventListener("click", () => $("#file-tree").jstree("open_all"));
+  collapseAllBtn.addEventListener("click", () => $("#file-tree").jstree("close_all"));
 }
 
 async function loadFileDiff(path) {
