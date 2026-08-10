@@ -189,6 +189,16 @@ main {
   margin-bottom: 12px;
 }
 
+.stage-option {
+  margin-bottom: 12px;
+}
+
+.field-hint {
+  margin: 4px 0 0 22px;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
 .field-row label,
 .field-row .label {
   min-width: 200px;

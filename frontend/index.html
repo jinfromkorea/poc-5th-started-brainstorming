@@ -40,9 +40,13 @@
           <input id="output-version" type="text" placeholder="비어있으면 원본 버전 유지" />
         </div>
 
-        <div class="field-row">
-          <label class="checkbox-label"><input id="run-stage1" type="checkbox" checked /> 1단계: 스택 마이그레이션 실행</label>
-          <label class="checkbox-label"><input id="run-stage2" type="checkbox" /> 2단계: 개별 OSS 취약점(CVE) 스캔/패치 실행</label>
+        <div class="stage-option">
+          <label class="checkbox-label"><input id="run-stage1" type="checkbox" checked /> 1단계: 목표 스택으로 마이그레이션 실행</label>
+          <p class="field-hint">Java 21 / Spring Boot 4.1 / Spring Cloud 2025.1 / Spring AI 2.0으로 일괄 업그레이드합니다. 스택을 올리는 것만으로도 다수의 알려진 취약점(CVE)이 함께 해소됩니다.</p>
+        </div>
+        <div class="stage-option">
+          <label class="checkbox-label"><input id="run-stage2" type="checkbox" /> 2단계: 전이 의존성을 포함한 OSS 취약점 스캔/패치 실행</label>
+          <p class="field-hint">직접 선언한 라이브러리뿐 아니라 그 라이브러리가 끌어오는 전이 의존성까지 포함해 취약점을 스캔하고, 1단계 이후에도 남아있는 개별 CVE를 패치합니다.</p>
         </div>
 
         <button type="submit" id="submit-btn">작업 시작</button>
