@@ -55,10 +55,7 @@
     </section>
 
     <section id="progress-panel" class="card hidden">
-      <div class="panel-header">
-        <h2>진행 상황</h2>
-        <button type="button" id="langgraph-help-btn" class="icon-btn help-btn" title="1단계/2단계가 내부적으로 어떻게 동작하는지 보기">?</button>
-      </div>
+      <h2>진행 상황</h2>
       <div class="field-row">
         <span class="label">작업 ID</span>
         <code id="job-id-display"></code>
@@ -134,132 +131,6 @@
       </div>
     </section>
   </main>
-
-  <div id="langgraph-modal" class="modal-overlay hidden">
-    <div class="modal modal-wide" role="dialog" aria-label="LangGraph 오케스트레이션">
-      <h2>LangGraph 오케스트레이션</h2>
-      <p class="field-hint">1단계/2단계는 각각 "적용 → 검증 → (실패 시) AI 수정 → 재검증"을 자동으로 반복하는 자가검증 루프입니다. 실선은 항상 지나가는 흐름, 점선은 상태에 따라 갈라지는 분기입니다.</p>
-
-      <h3>Stage 1 — 마이그레이션 스텝 1개</h3>
-      <div class="langgraph-diagram">
-        <svg viewBox="0 0 900 500" role="img" aria-label="Stage 1 LangGraph: START에서 plan을 거쳐 apply/verify/ai_fix를 오가며 성공 시 END, 재시도 소진 시 handoff를 거쳐 END로 간다">
-          <defs>
-            <marker id="lg1-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-              <path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)" />
-            </marker>
-          </defs>
-
-          <!-- edges (drawn first, under nodes) -->
-          <g fill="none" stroke="var(--text-muted)" stroke-width="1.5" marker-end="url(#lg1-arrow)">
-            <line x1="115" y1="140" x2="173" y2="140" />
-            <line x1="287" y1="140" x2="343" y2="140" stroke-dasharray="4 3" />
-            <path d="M230,162 C 300,220 420,260 478,296" stroke-dasharray="4 3" />
-            <path d="M230,118 C 230,20 830,20 830,122" stroke-dasharray="4 3" />
-            <line x1="455" y1="140" x2="543" y2="140" stroke-dasharray="4 3" />
-            <path d="M400,162 C 430,220 460,260 486,296" stroke-dasharray="4 3" />
-            <line x1="657" y1="140" x2="783" y2="140" stroke-dasharray="4 3" />
-            <path d="M608,162 C 615,220 590,260 560,296" stroke-dasharray="4 3" />
-            <path d="M470,298 C 500,240 550,180 583,164" stroke-dasharray="4 3" />
-            <path d="M617,162 C 660,260 670,340 655,416" stroke-dasharray="4 3" />
-            <path d="M553,325 C 585,360 595,385 601,415" stroke-dasharray="4 3" />
-            <path d="M650,418 C 760,400 830,300 830,158" />
-          </g>
-
-          <!-- edge labels -->
-          <g font-size="12" fill="var(--text-muted)" text-anchor="middle">
-            <g><rect x="180" y="122" width="86" height="16" fill="var(--bg-card)" /><text x="223" y="134">recipe 있음</text></g>
-            <g><rect x="300" y="222" width="96" height="16" fill="var(--bg-card)" /><text x="348" y="234">recipe 없음</text></g>
-            <g><rect x="465" y="30" width="130" height="16" fill="var(--bg-card)" /><text x="530" y="42">이미 목표 버전(스킵)</text></g>
-            <g><rect x="460" y="122" width="76" height="16" fill="var(--bg-card)" /><text x="498" y="134">성공</text></g>
-            <g><rect x="368" y="222" width="76" height="16" fill="var(--bg-card)" /><text x="406" y="234">적용 실패</text></g>
-            <g><rect x="678" y="122" width="76" height="16" fill="var(--bg-card)" /><text x="716" y="134">성공</text></g>
-            <g><rect x="470" y="255" width="104" height="16" fill="var(--bg-card)" /><text x="522" y="267">파일수 이하</text></g>
-            <g><rect x="600" y="200" width="90" height="16" fill="var(--bg-card)" /><text x="645" y="212">재시도 가능</text></g>
-            <g><rect x="600" y="290" width="104" height="16" fill="var(--bg-card)" /><text x="652" y="302">재시도 소진</text></g>
-            <g><rect x="555" y="365" width="90" height="16" fill="var(--bg-card)" /><text x="600" y="377">파일수 초과</text></g>
-          </g>
-
-          <!-- nodes -->
-          <g font-size="13" font-weight="600" text-anchor="middle">
-            <rect x="25" y="122" width="90" height="36" rx="18" fill="var(--accent)" />
-            <text x="70" y="145" fill="var(--accent-contrast)">START</text>
-
-            <rect x="175" y="118" width="110" height="44" rx="8" fill="var(--bg-sunken)" stroke="var(--border)" />
-            <text x="230" y="145" fill="var(--text)">plan</text>
-
-            <rect x="345" y="118" width="110" height="44" rx="8" fill="var(--bg-sunken)" stroke="var(--border)" />
-            <text x="400" y="145" fill="var(--text)">apply</text>
-
-            <rect x="545" y="118" width="110" height="44" rx="8" fill="var(--bg-sunken)" stroke="var(--border)" />
-            <text x="600" y="145" fill="var(--text)">verify</text>
-
-            <rect x="785" y="122" width="90" height="36" rx="18" fill="var(--accent)" />
-            <text x="830" y="145" fill="var(--accent-contrast)">END</text>
-
-            <rect x="445" y="298" width="110" height="44" rx="8" fill="var(--bg-sunken)" stroke="var(--border)" />
-            <text x="500" y="325" fill="var(--text)">ai_fix</text>
-
-            <rect x="595" y="418" width="110" height="44" rx="8" fill="var(--warning-bg)" stroke="var(--warning)" />
-            <text x="650" y="445" fill="var(--warning)">handoff</text>
-          </g>
-        </svg>
-      </div>
-
-      <h3>Stage 2 — CVE 패치 1건</h3>
-      <div class="langgraph-diagram">
-        <svg viewBox="0 0 900 500" role="img" aria-label="Stage 2 LangGraph: START에서 apply를 거쳐 verify로, 실패 시 ai_fix와 오가다가 재시도 소진 시 handoff를 거쳐 END로 간다">
-          <defs>
-            <marker id="lg2-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-              <path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)" />
-            </marker>
-          </defs>
-
-          <g fill="none" stroke="var(--text-muted)" stroke-width="1.5" marker-end="url(#lg2-arrow)">
-            <line x1="115" y1="140" x2="173" y2="140" />
-            <line x1="287" y1="140" x2="343" y2="140" />
-            <line x1="455" y1="140" x2="543" y2="140" stroke-dasharray="4 3" />
-            <path d="M608,162 C 615,220 590,260 560,296" stroke-dasharray="4 3" />
-            <path d="M470,298 C 500,240 550,180 583,164" stroke-dasharray="4 3" />
-            <path d="M617,162 C 660,260 670,340 655,416" stroke-dasharray="4 3" />
-            <path d="M553,325 C 585,360 595,385 601,415" stroke-dasharray="4 3" />
-            <path d="M650,418 C 760,400 830,300 830,158" />
-          </g>
-
-          <g font-size="12" fill="var(--text-muted)" text-anchor="middle">
-            <g><rect x="656" y="122" width="120" height="16" fill="var(--bg-card)" /><text x="716" y="134">mvn verify 성공</text></g>
-            <g><rect x="470" y="255" width="104" height="16" fill="var(--bg-card)" /><text x="522" y="267">파일수 이하</text></g>
-            <g><rect x="600" y="200" width="90" height="16" fill="var(--bg-card)" /><text x="645" y="212">재시도 가능</text></g>
-            <g><rect x="600" y="290" width="104" height="16" fill="var(--bg-card)" /><text x="652" y="302">재시도 소진</text></g>
-            <g><rect x="555" y="365" width="90" height="16" fill="var(--bg-card)" /><text x="600" y="377">파일수 초과</text></g>
-          </g>
-
-          <g font-size="13" font-weight="600" text-anchor="middle">
-            <rect x="25" y="122" width="90" height="36" rx="18" fill="var(--accent)" />
-            <text x="70" y="145" fill="var(--accent-contrast)">START</text>
-
-            <rect x="175" y="118" width="110" height="44" rx="8" fill="var(--bg-sunken)" stroke="var(--border)" />
-            <text x="230" y="145" fill="var(--text)">apply</text>
-
-            <rect x="345" y="118" width="110" height="44" rx="8" fill="var(--bg-sunken)" stroke="var(--border)" />
-            <text x="400" y="145" fill="var(--text)">verify</text>
-
-            <rect x="785" y="122" width="90" height="36" rx="18" fill="var(--accent)" />
-            <text x="830" y="145" fill="var(--accent-contrast)">END</text>
-
-            <rect x="445" y="298" width="110" height="44" rx="8" fill="var(--bg-sunken)" stroke="var(--border)" />
-            <text x="500" y="325" fill="var(--text)">ai_fix</text>
-
-            <rect x="595" y="418" width="110" height="44" rx="8" fill="var(--warning-bg)" stroke="var(--warning)" />
-            <text x="650" y="445" fill="var(--warning)">handoff</text>
-          </g>
-        </svg>
-      </div>
-
-      <div class="modal-close-row">
-        <button type="button" id="langgraph-modal-close-btn" class="secondary">닫기</button>
-      </div>
-    </div>
-  </div>
 
   <script src="assets/common.js"></script>
   <script src="assets/job-view.js"></script>
