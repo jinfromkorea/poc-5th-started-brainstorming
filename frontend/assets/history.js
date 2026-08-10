@@ -85,16 +85,17 @@ async function loadJobs() {
     const detailLink = document.createElement("a");
     detailLink.href = `job.html?job=${encodeURIComponent(job.job_id)}`;
     detailLink.textContent = "상세";
+    detailLink.className = "action-link";
     actionCell.appendChild(detailLink);
 
     const filesLink = document.createElement("a");
     filesLink.href = `files.html?job=${encodeURIComponent(job.job_id)}`;
     filesLink.textContent = "파일";
+    filesLink.className = "action-link";
     actionCell.appendChild(filesLink);
 
     const actionBtn = document.createElement("button");
     actionBtn.type = "button";
-    actionBtn.className = "secondary";
     if (ACTIVE_STATUSES.has(job.status)) {
       actionBtn.textContent = "중지";
       actionBtn.addEventListener("click", () => stopJob(job.job_id, actionBtn));
