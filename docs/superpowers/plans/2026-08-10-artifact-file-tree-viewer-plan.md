@@ -62,7 +62,12 @@ def show_file_bytes(work_dir: Path, settings: Settings, ref: str, path: str) -> 
 ## 2. `api/routers/artifacts.py` — 트리/파일 엔드포인트
 
 - import 추가: `from app.checkpoint.git_repo import diff_status_map, list_tracked_files, resolve_ingest_baseline, show_file_bytes`.
-- 모듈 상단에 `_NOISE_DIR_NAMES = {".git", "target", "dist", "build", "node_modules", "__pycache__", ".venv"}` 추가.
+- 모듈 상단에 다음 두 상수 추가:
+
+```python
+_NOISE_DIR_NAMES = {".git", "target", "dist", "build", "node_modules", "__pycache__", ".venv"}
+_STATUS_LABELS = {"A": "added", "M": "modified"}  # diff_status_map의 원시 git 코드 -> 프론트에 노출할 값
+```
 - 기존 `_output_dir` 옆에 `_work_dir` 헬퍼 추가:
 
 ```python
@@ -84,7 +89,7 @@ async def get_file_tree(job_id: str, settings: Settings = Depends(get_settings),
     baseline = resolve_ingest_baseline(work_dir, settings)
     status_map = diff_status_map(work_dir, settings, baseline)
     return [
-        {"path": p, "status": status_map.get(p, "unchanged")}
+        {"path": p, "status": _STATUS_LABELS.get(status_map.get(p, ""), "unchanged")}
         for p in list_tracked_files(work_dir, settings)
         if not any(seg in _NOISE_DIR_NAMES for seg in p.split("/"))
     ]
@@ -112,7 +117,7 @@ async def get_file_before_after(
 ```
 
 **검증**: `backend/tests/integration/test_artifacts_api.py`에 추가 (기존 `app_client`/`_wait_for_terminal_status`/`_zip_bytes` 재사용, `_POM` 픽스처를 여러 파일이 있는 프로젝트로 확장하거나 새 zip 픽스처 구성):
-- `test_get_file_tree_marks_modified_and_excludes_noise_dirs`: 완주한 job에서 `GET /jobs/{id}/artifacts/tree` → 수정된 파일은 `status: "modified"`(또는 API가 반환하는 실제 코드값 `"M"`/`"modified"` 중 스펙과 일치하는 쪽으로 통일 — 구현 시 `diff_status_map`이 반환하는 원시 코드(`"A"`/`"M"`)를 그대로 쓸지, `"added"`/`"modified"`/`"unchanged"`로 변환할지 정하고 프론트(§6)와 맞춘다), 손대지 않은 파일은 `unchanged`, `target/` 등을 흉내 낸 파일이 있다면 목록에서 빠지는지.
+- `test_get_file_tree_marks_modified_and_excludes_noise_dirs`: 완주한 job에서 `GET /jobs/{id}/artifacts/tree` → 새로 추가된 파일은 `status: "added"`, 수정된 파일은 `"modified"`, 손대지 않은 파일은 `"unchanged"`, `target/` 등을 흉내 낸 파일이 있다면 목록에서 빠지는지.
 - `test_get_file_content_returns_before_and_after`: 수정된 파일 하나를 골라 `GET /jobs/{id}/artifacts/file?path=...` → `before`/`after`가 실제 내용과 일치하는지.
 - `test_get_file_content_for_unknown_path_returns_404`.
 - `test_get_file_tree_and_content_for_unknown_job_returns_404`.
@@ -220,6 +225,16 @@ function buildTree(entries) {
   return root;
 }
 
+function sortedChildKeys(node) {
+  // 폴더를 파일보다 먼저, 각 그룹 안에서는 이름순 -- 탐색기 스타일 정렬.
+  return Object.keys(node).sort((a, b) => {
+    const aIsFile = !!node[a].__file;
+    const bIsFile = !!node[b].__file;
+    if (aIsFile !== bIsFile) return aIsFile ? 1 : -1;
+    return a.localeCompare(b);
+  });
+}
+
 function renderNode(name, node, container) {
   if (node.__file) {
     const btn = document.createElement("button");
@@ -230,14 +245,15 @@ function renderNode(name, node, container) {
     container.appendChild(btn);
     return;
   }
+  // <details>/<summary>이므로 폴더 접기/펼치기는 기본 제공 -- open=true는
+  // 초기 상태일 뿐, 클릭하면 언제든 접을 수 있다 (job.html의 취약점 표와
+  // 같은 네이티브 패턴).
   const details = document.createElement("details");
   details.open = true;
   const summary = document.createElement("summary");
   summary.textContent = name;
   details.appendChild(summary);
-  Object.keys(node)
-    .sort()
-    .forEach((key) => renderNode(key, node[key], details));
+  sortedChildKeys(node).forEach((key) => renderNode(key, node[key], details));
   container.appendChild(details);
 }
 
@@ -251,9 +267,7 @@ async function loadTree() {
   const entries = await res.json();
   const tree = buildTree(entries);
   fileTree.innerHTML = "";
-  Object.keys(tree)
-    .sort()
-    .forEach((key) => renderNode(key, tree[key], fileTree));
+  sortedChildKeys(tree).forEach((key) => renderNode(key, tree[key], fileTree));
 }
 
 async function loadFileDiff(path) {
@@ -329,7 +343,7 @@ if (!jobId) {
   3. 수정된 파일 클릭 시 좌우에 실제 수정 전/후 코드가 보이는지, 새로 추가된 파일은 왼쪽에 "(새로 추가된 파일)"이 나오는지.
   4. (가능하면) 바이너리 파일이 포함된 프로젝트로 job을 하나 만들어 "바이너리 파일은 미리볼 수 없습니다" 문구가 뜨는지.
 
-## 참고 — 스펙에서 구현 단계로 넘어오며 확정해야 할 세부사항
+## 참고 — 스펙에서 구현 단계로 넘어오며 확정한 세부사항
 
-- `diff_status_map`이 반환하는 원시 상태 코드(`"A"`/`"M"`)를 트리 API 응답에 그대로 노출할지(`"A"`/`"M"`/`"unchanged"`), 프론트에서 읽기 좋은 값(`"added"`/`"modified"`/`"unchanged"`)으로 바꿀지는 스펙에 명시돼 있지 않다 — §2 구현 시 정하고, §5의 `files.js`가 그 값을 그대로 배지 텍스트(`[${node.status}]`)에 쓰므로 두 쪽을 반드시 같은 값으로 맞춘다.
-- `files.js`의 트리 정렬은 `Object.keys(...).sort()`로 폴더/파일 구분 없이 알파벳순 — 폴더를 파일보다 먼저 보여주고 싶다면 `renderNode` 호출 전에 `node.__file` 유무로 먼저 나눠 정렬하는 것을 구현 시 고려(스펙에 없던 세부사항, 있으면 좋지만 필수는 아님).
+- **상태 값 변환**: `diff_status_map`이 반환하는 원시 git 코드(`"A"`/`"M"`)는 API 경계를 넘기 전에 `_STATUS_LABELS`로 `"added"`/`"modified"`(미변경은 `"unchanged"`)로 변환해 응답한다. `files.js`는 이 값을 그대로 배지 텍스트(`[${node.status}]`)에 쓰므로 백엔드/프론트가 항상 같은 어휘를 쓴다.
+- **트리 정렬 및 접기/펼치기**: `files.js`의 `sortedChildKeys()`가 각 폴더 안에서 하위 폴더를 파일보다 먼저, 그 안에서는 이름순으로 정렬한다. 폴더는 전부 `<details>`/`<summary>`로 렌더링되므로(§5) 접기/펼치기는 네이티브로 이미 동작 — `open=true`는 초기 펼침 상태일 뿐 언제든 클릭으로 접을 수 있다(job.html의 취약점 표와 같은 패턴, Plan 1 참고).
