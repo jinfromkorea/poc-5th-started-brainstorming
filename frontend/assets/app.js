@@ -34,6 +34,9 @@ function resetProgressUI(jobId) {
   vulnBaselineSection.classList.add("hidden");
   vulnBaselineTableBody.innerHTML = "";
   vulnBaselineEmpty.classList.add("hidden");
+  vulnPostStage1Section.classList.add("hidden");
+  vulnPostStage1TableBody.innerHTML = "";
+  vulnPostStage1Empty.classList.add("hidden");
   vulnSection.classList.add("hidden");
   vulnTableBody.innerHTML = "";
   vulnEmpty.classList.add("hidden");

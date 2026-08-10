@@ -13,6 +13,10 @@ const vulnBaselineSection = el("vuln-baseline-section");
 const vulnBaselineTableBody = el("vuln-baseline-table-body");
 const vulnBaselineEmpty = el("vuln-baseline-empty");
 const vulnBaselineCount = el("vuln-baseline-count");
+const vulnPostStage1Section = el("vuln-post-stage1-section");
+const vulnPostStage1TableBody = el("vuln-post-stage1-table-body");
+const vulnPostStage1Empty = el("vuln-post-stage1-empty");
+const vulnPostStage1Count = el("vuln-post-stage1-count");
 const vulnSection = el("vuln-section");
 const vulnTableBody = el("vuln-table-body");
 const vulnEmpty = el("vuln-empty");
@@ -271,6 +275,15 @@ function renderVulnerabilitiesBaseline(vulnerabilities) {
   });
 }
 
+function renderVulnerabilitiesPostStage1(vulnerabilities) {
+  renderVulnerabilitiesInto(vulnerabilities, {
+    section: vulnPostStage1Section,
+    tableBody: vulnPostStage1TableBody,
+    emptyMsg: vulnPostStage1Empty,
+    countBadge: vulnPostStage1Count,
+  });
+}
+
 function renderVulnerabilities(vulnerabilities) {
   renderVulnerabilitiesInto(vulnerabilities, {
     section: vulnSection,
@@ -390,6 +403,10 @@ function connectSSE(jobId) {
 
   es.addEventListener("vulnerabilities_baseline", (ev) => {
     renderVulnerabilitiesBaseline(JSON.parse(ev.data).vulnerabilities);
+  });
+
+  es.addEventListener("vulnerabilities_post_stage1", (ev) => {
+    renderVulnerabilitiesPostStage1(JSON.parse(ev.data).vulnerabilities);
   });
 
   es.addEventListener("vulnerabilities", (ev) => {

@@ -612,6 +612,52 @@ def test_stage1_and_stage2_job_scans_exactly_three_times(app_client, monkeypatch
     assert call_count["n"] == 3
 
 
+def test_stage1_only_job_emits_post_stage1_vulnerabilities_event(app_client, monkeypatch):
+    """Regression test: a Stage-1-only job (run_stage2=False) used to never
+    scan again after Stage 1 finished, so the "마이그레이션 후" table had
+    nothing to show -- only Stage 0's baseline scan ever ran. Stage 1's own
+    result should be visible regardless of whether Stage 2 was requested."""
+    from app.models.db import session_factory as make_session_factory
+    from app.models.job import JobEvent
+
+    call_count = {"n": 0}
+
+    async def counting_scan(work_dir, output_dir, settings_):
+        call_count["n"] += 1
+        return []
+
+    monkeypatch.setattr("app.orchestration.pipeline.mvn_effective_pom", _fast_mvn_effective_pom)
+    monkeypatch.setattr("app.orchestration.pipeline.run_combined_scan", counting_scan)
+    monkeypatch.setattr("app.orchestration.pipeline.apply_output_version", _fast_apply_output_version)
+
+    zip_content = _zip_bytes({"pom.xml": _POM})
+    create_resp = app_client.post(
+        "/jobs",
+        data={"run_stage1": "true", "run_stage2": "false"},
+        files={"zip_file": ("project.zip", zip_content, "application/zip")},
+    )
+    job_id = create_resp.json()["job_id"]
+    _wait_for_status(app_client, job_id, "awaiting_version_approval")
+
+    resp = app_client.post(f"/jobs/{job_id}/confirm-version", json={"output_version": "2.0.0"})
+    assert resp.status_code == 200
+    _wait_for_terminal_status(app_client, job_id)
+
+    # baseline (Stage 0) + post-Stage-1 -- no Stage 2, but the post-Stage-1
+    # scan must still run.
+    assert call_count["n"] == 2
+
+    factory = make_session_factory(app_client.app.dependency_overrides[get_settings]())
+    with factory() as session:
+        row = (
+            session.query(JobEvent)
+            .filter(JobEvent.job_id == job_id, JobEvent.event_type == "vulnerabilities_post_stage1")
+            .first()
+        )
+    assert row is not None
+    assert row.data == {"vulnerabilities": []}
+
+
 def test_delete_unknown_job_returns_404(app_client):
     resp = app_client.delete("/jobs/does-not-exist")
     assert resp.status_code == 404

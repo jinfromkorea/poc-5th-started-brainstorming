@@ -321,9 +321,19 @@ async def run_pipeline_resume_after_version_confirm(
                 (handoff_dir / "stage1-guide.md").write_text(stage1_result.handoff_guide, encoding="utf-8")
                 needs_handoff = True
 
+            # Always scan right after Stage 1, regardless of whether Stage 2
+            # was requested -- this is how much the migration alone resolved,
+            # a number worth showing on its own (spec: docs/superpowers/
+            # specs/2026-08-10-stage1-post-migration-scan-design.md). When
+            # Stage 2 does run, this same scan doubles as its patch-target
+            # list, so it never gets scanned twice for the same work/ state.
+            await log("1단계 이후 취약점 재스캔")
+            post_stage1_vulns = await run_combined_scan(work_dir, output_dir, settings)
+            await emit("vulnerabilities_post_stage1", {"vulnerabilities": [asdict(v) for v in post_stage1_vulns]})
+            await log(f"{len(post_stage1_vulns)}개 취약점 남음 (마이그레이션 후)")
+
             if run_stage2 and not needs_handoff:
-                await log("1단계 이후 취약점 재스캔")
-                stage2_vulns = await run_combined_scan(work_dir, output_dir, settings)
+                stage2_vulns = post_stage1_vulns
         elif run_stage2:
             # Stage 1을 안 돌렸으므로 work/는 Stage 0의 베이스라인 스캔 이후
             # 안 바뀌었다(버전 적용은 의존성을 안 건드림) -- 재스캔 대신 그
@@ -397,8 +407,16 @@ async def run_pipeline_resume_stage2(job_id: str, settings: Settings, session_fa
     await emit("status", {"status": "running"})
 
     try:
-        await log("취약점 재스캔 (2단계 패치 대상 선정)")
-        vulns = await run_combined_scan(work_dir, output_dir, settings)
+        # work/ has sat untouched since Stage 1 finished and emitted this
+        # same scan as "vulnerabilities_post_stage1" -- reuse it instead of
+        # paying for a redundant re-scan (same reasoning as the Stage-0-
+        # baseline reuse in run_pipeline_resume_after_version_confirm).
+        post_stage1_data = _latest_event_data(session_factory, job_id, "vulnerabilities_post_stage1")
+        if post_stage1_data is not None:
+            vulns = [Vulnerability(**v) for v in post_stage1_data["vulnerabilities"]]
+        else:
+            await log("취약점 재스캔 (2단계 패치 대상 선정)")
+            vulns = await run_combined_scan(work_dir, output_dir, settings)
         stage2_report, _stage2_needs_handoff = await _run_stage2_block(
             emit, log, job_id, work_dir, output_dir, stage_baseline, handoff_dir, settings, vulns
         )

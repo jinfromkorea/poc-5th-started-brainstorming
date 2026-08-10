@@ -183,6 +183,25 @@ async def test_stage1_only_success_writes_report_and_diff(monkeypatch, settings,
         assert events[-1].event_type == "status"
         assert events[-1].data == {"status": "success"}
 
+        # Stage 1 alone (no Stage 2 selected) must still report how much the
+        # migration resolved -- this used to be silently skipped whenever
+        # run_stage2 was False.
+        post_stage1_events = [e for e in events if e.event_type == "vulnerabilities_post_stage1"]
+        assert len(post_stage1_events) == 1
+        assert post_stage1_events[0].data == {
+            "vulnerabilities": [
+                {
+                    "cve_id": "CVE-2025-9999",
+                    "package": "com.example:old-lib",
+                    "installed_version": "0.9.0",
+                    "fix_version": "0.9.1",
+                    "cvss": 6.5,
+                    "severity": "MEDIUM",
+                    "source": "trivy",
+                }
+            ]
+        }
+
     assert (job_paths.output / "patch.diff").read_text(encoding="utf-8").startswith("diff --git")
     assert "stage1 report" in (job_paths.output / "report.md").read_text(encoding="utf-8")
     assert not (job_paths.output / "handoff").exists()
@@ -394,9 +413,11 @@ async def test_stage1_needs_handoff_with_stage2_requested_pauses_for_approval(mo
         session_factory=db,
     )
 
-    # run_combined_scan only ran once (the pre-Stage-1 baseline scan) -- the
+    # run_combined_scan ran exactly twice: the pre-Stage-1 baseline scan and
+    # the always-runs post-Stage-1 scan (which reports how much the
+    # migration alone resolved, even though it ended needs_handoff) -- the
     # Stage 2 scan (also run_combined_scan under the hood) never starts.
-    assert baseline_scan_calls["n"] == 1
+    assert baseline_scan_calls["n"] == 2
 
     with db() as session:
         job = session.get(Job, job_id)
@@ -405,6 +426,7 @@ async def test_stage1_needs_handoff_with_stage2_requested_pauses_for_approval(mo
         assert "stage2 report" not in job.report_markdown
 
         event_types = [e.event_type for e in session.query(JobEvent).filter_by(job_id=job_id).order_by(JobEvent.seq).all()]
+        assert "vulnerabilities_post_stage1" in event_types
         assert event_types[-1] == "status"
 
     assert (job_paths.output / "handoff" / "stage1-guide.md").exists()
