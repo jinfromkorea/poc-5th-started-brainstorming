@@ -23,7 +23,7 @@ function buildTreeData(entries) {
       if (!node.children[part]) {
         node.children[part] = isFile
           ? { text: status === "unchanged" ? part : `${part} [${status}]`, type: "file", li_attr: { "data-path": path } }
-          : { text: part, type: "default", state: { opened: true }, children: {} };
+          : { text: part, type: "default", children: {} };
       }
       node = node.children[part];
     });

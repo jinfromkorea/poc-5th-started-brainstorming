@@ -302,6 +302,8 @@ if (!jobId) {
 
 **[구현 후 변경]** 위 `<details>` 기반 트리는 최초 구현이었고, 이후 사용자 요청으로 jsTree(jQuery 플러그인)로 교체했다. `frontend/assets/vendor/{jquery,jstree}/`에 jQuery 3.7.1 + jsTree 3.3.16(default 테마, 아이콘 스프라이트 포함)을 다운로드해 커밋(CDN 미사용 — 사내 폐쇄망 로컬 도구라는 특성 고려, cdnjs SRI 해시로 무결성 확인). `files.js`의 `buildTree`/`sortedChildKeys`/`renderNode`는 `buildTreeData`(jsTree의 중첩 `{text, type, children}` JSON 포맷 생성, 폴더 우선 정렬은 그대로 유지) + `$("#file-tree").jstree({...})` 호출로 대체됐고, 파일 클릭은 `select_node.jstree` 이벤트에서 `li_attr["data-path"]`를 읽어 처리한다. `files.html`에 `assets/vendor/jstree/themes/default/style.min.css`, `assets/vendor/jquery/jquery.min.js`, `assets/vendor/jstree/jstree.min.js`를 로드하는 태그가 추가됐다 — 이 프론트엔드의 첫 외부 라이브러리 의존성.
 
+**[구현 후 추가 변경]** jsTree 전환 직후엔 폴더 노드에 `state: { opened: true }`를 줘서 기존(`<details open>`) 기본 펼침 정책을 유지했으나, 이후 사용자 요청으로 기본 접힘으로 다시 바꿨다(`state` 속성 자체를 제거 — jsTree 기본값이 이미 닫힘이므로). §4 결정 사항의 "기본값은 펼침"은 더 이상 유효하지 않다.
+
 ## 6. `assets/app.css` — 레이아웃 스타일
 
 ```css
@@ -333,7 +335,7 @@ if (!jobId) {
 - `backend/.venv312/Scripts/python.exe -m pytest -q --basetemp=/c/pytesttmp`로 유닛+통합 전체 통과 확인(0단계 베이스라인과 비교해 새로 깨진 테스트가 없는지).
 - 백엔드(`uvicorn`)와 프론트(정적 서버)를 띄우고, 실제 변경 사항이 있는 job으로:
   1. `job.html`에서 "파일별로 보기" 링크가 diff 있는 job에서만 보이는지.
-  2. `files.html`에서 jsTree 트리가 기본 펼침으로 로드되고 `target/`/`.git` 등이 안 보이며, 폴더/파일 아이콘이 정상 표시되는지(vendor CSS/이미지 경로가 올바른지 확인).
+  2. `files.html`에서 jsTree 트리가 기본 접힘으로 로드되고 `target/`/`.git` 등이 안 보이며, 폴더/파일 아이콘이 정상 표시되는지(vendor CSS/이미지 경로가 올바른지 확인).
   3. 수정된 파일 클릭 시 좌우에 실제 수정 전/후 코드가 보이는지, 새로 추가된 파일은 왼쪽에 "(새로 추가된 파일)"이 나오는지.
   4. (가능하면) 바이너리 파일이 포함된 프로젝트로 job을 하나 만들어 "바이너리 파일은 미리볼 수 없습니다" 문구가 뜨는지.
 
