@@ -183,6 +183,16 @@ main {
   font-size: 1rem;
 }
 
+.panel-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.panel-header h2 {
+  margin-bottom: 0;
+}
+
 .field-row {
   display: flex;
   flex-wrap: wrap;
