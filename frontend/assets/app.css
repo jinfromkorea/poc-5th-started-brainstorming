@@ -316,6 +316,23 @@ button.secondary:hover:not(:disabled) {
   border-color: var(--accent);
 }
 
+.link-button {
+  display: inline-block;
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--accent);
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  border-color: var(--accent);
+}
+
 #cache-status-text {
   color: var(--text-muted);
   font-size: 0.85rem;
