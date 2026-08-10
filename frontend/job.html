@@ -27,6 +27,17 @@
         <button id="proceed-btn" type="button" class="hidden">2단계로 진행 (승인)</button>
         <button id="stop-btn" type="button" class="hidden">중지</button>
       </div>
+      <div id="version-approval-panel" class="hidden">
+        <p class="field-hint">
+          감지된 현재 버전: <strong id="detected-current-version"></strong>
+          · 제안된 출력 버전: <strong id="suggested-output-version"></strong>
+        </p>
+        <div class="field-row">
+          <label for="confirm-version-input">적용할 출력 버전</label>
+          <input id="confirm-version-input" type="text" />
+          <button type="button" id="confirm-version-btn">확인하고 계속</button>
+        </div>
+      </div>
       <div id="log-list" class="log-list"></div>
     </section>
 
@@ -75,6 +86,25 @@
           </table>
         </div>
         <p id="vuln-empty" class="hidden">임계값 이상 취약점이 발견되지 않았습니다.</p>
+      </details>
+      <details id="vuln-final-section" class="vuln-details hidden">
+        <summary>오픈소스 취약점 (최종) <span id="vuln-final-count" class="badge">0건</span></summary>
+        <div class="table-scroll">
+          <table id="vuln-final-table">
+            <thead>
+              <tr>
+                <th>CVE</th>
+                <th>패키지</th>
+                <th>설치 버전</th>
+                <th>수정 버전</th>
+                <th>CVSS</th>
+                <th>심각도</th>
+              </tr>
+            </thead>
+            <tbody id="vuln-final-table-body"></tbody>
+          </table>
+        </div>
+        <p id="vuln-final-empty" class="hidden">임계값 이상 취약점이 발견되지 않았습니다.</p>
       </details>
     </section>
 

@@ -17,6 +17,10 @@ const vulnSection = el("vuln-section");
 const vulnTableBody = el("vuln-table-body");
 const vulnEmpty = el("vuln-empty");
 const vulnCount = el("vuln-count");
+const vulnFinalSection = el("vuln-final-section");
+const vulnFinalTableBody = el("vuln-final-table-body");
+const vulnFinalEmpty = el("vuln-final-empty");
+const vulnFinalCount = el("vuln-final-count");
 
 const progressPanel = el("progress-panel");
 const jobIdDisplay = el("job-id-display");
@@ -24,6 +28,11 @@ const statusBadge = el("status-badge");
 const proceedBtn = el("proceed-btn");
 const stopBtn = el("stop-btn");
 const logList = el("log-list");
+const versionApprovalPanel = el("version-approval-panel");
+const detectedCurrentVersionEl = el("detected-current-version");
+const suggestedOutputVersionEl = el("suggested-output-version");
+const confirmVersionInput = el("confirm-version-input");
+const confirmVersionBtn = el("confirm-version-btn");
 const artifactsPanel = el("artifacts-panel");
 const viewDiffBtn = el("view-diff-btn");
 const viewReportBtn = el("view-report-btn");
@@ -271,6 +280,48 @@ function renderVulnerabilities(vulnerabilities) {
   });
 }
 
+function renderVulnerabilitiesFinal(vulnerabilities) {
+  renderVulnerabilitiesInto(vulnerabilities, {
+    section: vulnFinalSection,
+    tableBody: vulnFinalTableBody,
+    emptyMsg: vulnFinalEmpty,
+    countBadge: vulnFinalCount,
+  });
+}
+
+function showVersionApprovalPanel(currentVersion, suggestedVersion) {
+  versionApprovalPanel.classList.remove("hidden");
+  detectedCurrentVersionEl.textContent = currentVersion ?? "-";
+  suggestedOutputVersionEl.textContent = suggestedVersion ?? "-";
+  confirmVersionInput.value = suggestedVersion ?? "";
+  confirmVersionBtn.disabled = false;
+}
+
+function hideVersionApprovalPanel() {
+  versionApprovalPanel.classList.add("hidden");
+}
+
+confirmVersionBtn.addEventListener("click", async () => {
+  const jobId = jobIdDisplay.textContent;
+  confirmVersionBtn.disabled = true;
+  try {
+    const res = await fetch(apiUrl(`/jobs/${jobId}/confirm-version`), {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ output_version: confirmVersionInput.value.trim() }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || `HTTP ${res.status}`);
+    }
+    // no reconnect needed -- the already-open SSE connection delivers the
+    // next "status" (running) event, which hides this panel (see below).
+  } catch (err) {
+    appendLog(`버전 확인 실패: ${err.message}`, true);
+    confirmVersionBtn.disabled = false;
+  }
+});
+
 function showProceedButton(jobId) {
   proceedBtn.classList.remove("hidden");
   proceedBtn.disabled = false;
@@ -345,11 +396,20 @@ function connectSSE(jobId) {
     renderVulnerabilities(JSON.parse(ev.data).vulnerabilities);
   });
 
+  es.addEventListener("vulnerabilities_final", (ev) => {
+    renderVulnerabilitiesFinal(JSON.parse(ev.data).vulnerabilities);
+  });
+
   es.addEventListener("status", (ev) => {
     const data = JSON.parse(ev.data);
     setStatusBadge(data.status);
     if (data.error) {
       appendLog(`오류: ${data.error}`, true);
+    }
+    if (data.status === "awaiting_version_approval") {
+      showVersionApprovalPanel(data.current_version, data.suggested_version);
+    } else {
+      hideVersionApprovalPanel();
     }
     if (data.status === "awaiting_approval") {
       // let the human review the diff/report/handoff guide so far before deciding

@@ -28,19 +28,12 @@
           <input id="git-url" type="text" placeholder="https://git.example.com/team/service.git" />
           <label for="git-ref">브랜치/태그 (선택)</label>
           <input id="git-ref" type="text" placeholder="main" />
-          <button type="button" id="check-version-btn" class="secondary">현재 버전 확인</button>
         </div>
 
         <div class="field-row hidden" id="zip-fields">
           <label for="zip-file">ZIP 파일</label>
           <input id="zip-file" type="file" accept=".zip" />
         </div>
-
-        <div class="field-row">
-          <label for="output-version">출력 아티팩트 버전 (선택, 예: 1.0.0)</label>
-          <input id="output-version" type="text" placeholder="비어있으면 원본 버전 유지" />
-        </div>
-        <p id="version-hint" class="field-hint hidden"></p>
 
         <div class="stage-option">
           <label class="checkbox-label"><input id="run-stage1" type="checkbox" checked /> 1단계: 목표 스택으로 마이그레이션 실행</label>
@@ -65,6 +58,17 @@
         <button id="proceed-btn" type="button" class="hidden">2단계로 진행 (승인)</button>
         <button id="stop-btn" type="button" class="hidden">중지</button>
       </div>
+      <div id="version-approval-panel" class="hidden">
+        <p class="field-hint">
+          감지된 현재 버전: <strong id="detected-current-version"></strong>
+          · 제안된 출력 버전: <strong id="suggested-output-version"></strong>
+        </p>
+        <div class="field-row">
+          <label for="confirm-version-input">적용할 출력 버전</label>
+          <input id="confirm-version-input" type="text" />
+          <button type="button" id="confirm-version-btn">확인하고 계속</button>
+        </div>
+      </div>
       <div id="log-list" class="log-list"></div>
     </section>
 
@@ -76,8 +80,8 @@
         <div class="field-row"><span class="label">Spring Cloud</span><span id="stack-spring-cloud">-</span></div>
         <div class="field-row"><span class="label">Spring AI</span><span id="stack-spring-ai">-</span></div>
       </div>
-      <div id="vuln-baseline-section" class="hidden">
-        <h3>오픈소스 취약점 (마이그레이션 전)</h3>
+      <details id="vuln-baseline-section" class="vuln-details hidden">
+        <summary>오픈소스 취약점 (마이그레이션 전) <span id="vuln-baseline-count" class="badge">0건</span></summary>
         <div class="table-scroll">
           <table id="vuln-baseline-table">
             <thead>
@@ -94,9 +98,9 @@
           </table>
         </div>
         <p id="vuln-baseline-empty" class="hidden">임계값 이상 취약점이 발견되지 않았습니다.</p>
-      </div>
-      <div id="vuln-section" class="hidden">
-        <h3>오픈소스 취약점 (2단계 패치 대상)</h3>
+      </details>
+      <details id="vuln-section" class="vuln-details hidden">
+        <summary>오픈소스 취약점 (2단계 패치 대상) <span id="vuln-count" class="badge">0건</span></summary>
         <div class="table-scroll">
           <table id="vuln-table">
             <thead>
@@ -113,7 +117,26 @@
           </table>
         </div>
         <p id="vuln-empty" class="hidden">임계값 이상 취약점이 발견되지 않았습니다.</p>
-      </div>
+      </details>
+      <details id="vuln-final-section" class="vuln-details hidden">
+        <summary>오픈소스 취약점 (최종) <span id="vuln-final-count" class="badge">0건</span></summary>
+        <div class="table-scroll">
+          <table id="vuln-final-table">
+            <thead>
+              <tr>
+                <th>CVE</th>
+                <th>패키지</th>
+                <th>설치 버전</th>
+                <th>수정 버전</th>
+                <th>CVSS</th>
+                <th>심각도</th>
+              </tr>
+            </thead>
+            <tbody id="vuln-final-table-body"></tbody>
+          </table>
+        </div>
+        <p id="vuln-final-empty" class="hidden">임계값 이상 취약점이 발견되지 않았습니다.</p>
+      </details>
     </section>
 
     <section id="artifacts-panel" class="card hidden">
