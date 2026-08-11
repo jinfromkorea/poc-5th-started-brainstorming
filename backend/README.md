@@ -24,7 +24,7 @@
 | `mvn -version` | 대상 프로젝트의 Maven 빌드, OpenRewrite(`mvn rewrite:run`), Maven Versions Plugin 실행 |
 | `git --version` | Git URL 인입(`git clone`), `work/` 디렉토리의 체크포인트/롤백(`git init`/`commit`/`reset`) — ZIP으로 인입해도 항상 필요 |
 | `python --version` | 이 도구 자신(FastAPI 백엔드)의 실행 (3.11+) |
-| `trivy --version` | 2단계 취약점 스캔 |
+| `trivy --version` | 취약점 스캔(Stage 0의 마이그레이션 전/후 베이스라인 스캔 + 2단계 패치 대상 선정 — 1단계만 선택해도 실행됨) |
 
 각 항목이 없거나 버전이 안 맞으면, 스크립트가 설치 방법(공식 배포처 링크)을 함께 안내합니다.
 
@@ -46,7 +46,7 @@ cp .env.example .env
 `.env`를 열어 최소한 아래 값을 채우세요 (`../draft/.env`에 실제 값 예시가 있습니다 — 이 파일은 절대 커밋하지 마세요):
 
 - `OPENAI_API_KEY` — LLM 오케스트레이션용
-- `NVD_API_KEY` — 2단계 취약점 스캔(OWASP Dependency-Check)용
+- `NVD_API_KEY` — 취약점 스캔(OWASP Dependency-Check)용 — Stage 0의 베이스라인 스캔과 2단계 패치 대상 선정 모두에 쓰입니다(1단계만 선택해도 필요)
 - `API_AUTH_TOKEN` — 비워두면 인증 없이 실행됩니다(로컬 단독 실행 시 기본값으로 무방하나, 시작 로그에 경고가 남습니다)
 
 사내망 프록시를 쓰는 환경이면 `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`도 채워주세요.
@@ -61,7 +61,7 @@ uvicorn app.main:app --host 127.0.0.1 --port 8010
 
 **최초 실행 전에 NVD/Trivy 캐시를 한 번 갱신하세요.** 스캔(2단계)은 더 이상 DB를 암묵적으로 갱신하지 않습니다(사내망 프록시 환경에서 스캔 도중 예측 불가능하게 네트워크를 타는 것을 막기 위함, `docs/architecture.md` §8.4) — 캐시가 비어 있으면 스캔이 그냥 "취약점 없음"으로 조용히 끝납니다. 프론트엔드 설정(⚙) 모달의 "지금 갱신" 버튼을 누르거나, `POST /cache/refresh`를 직접 호출하세요.
 
-**Windows에서 `--reload`를 쓰면 안 됩니다.** uvicorn은 `--reload`(또는 `--workers`>1) 시 워커를 별도 프로세스로 띄우면서 이벤트 루프를 `SelectorEventLoop`로 강제 전환하는데(`use_subprocess=True` 분기), Windows의 `SelectorEventLoop`는 `asyncio` 서브프로세스(`create_subprocess_exec`)를 지원하지 않아 인자 없는 `NotImplementedError`를 던집니다. 이 앱은 `mvn`/OpenRewrite/Trivy를 전부 비동기 서브프로세스로 실행하므로, `--reload`를 쓰면 인입(ingest, git은 동기 호출이라 통과) 직후 첫 비동기 서브프로세스 호출(예: 출력 아티팩트 버전 설정 단계의 `mvn versions:set`)에서 **원인 메시지가 빈 문자열인 채로 작업이 `failed` 처리**됩니다. 코드를 고치면 화면에서 바로 반영되지 않으니, 수정 후에는 서버를 수동으로 재시작하세요.
+**Windows에서 `--reload`를 쓰면 안 됩니다.** uvicorn은 `--reload`(또는 `--workers`>1) 시 워커를 별도 프로세스로 띄우면서 이벤트 루프를 `SelectorEventLoop`로 강제 전환하는데(`use_subprocess=True` 분기), Windows의 `SelectorEventLoop`는 `asyncio` 서브프로세스(`create_subprocess_exec`)를 지원하지 않아 인자 없는 `NotImplementedError`를 던집니다. 이 앱은 `mvn`/OpenRewrite/Trivy를 전부 비동기 서브프로세스로 실행하므로, `--reload`를 쓰면 인입(ingest, git은 동기 호출이라 통과) 직후 첫 비동기 서브프로세스 호출(Stage 0의 `mvn effective-pom` 분석)에서 **원인 메시지가 빈 문자열인 채로 작업이 `failed` 처리**됩니다. 코드를 고치면 화면에서 바로 반영되지 않으니, 수정 후에는 서버를 수동으로 재시작하세요.
 
 ## 5. 테스트
 
