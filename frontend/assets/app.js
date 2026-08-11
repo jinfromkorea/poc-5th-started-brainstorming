@@ -19,32 +19,6 @@ document.querySelectorAll('input[name="source-type"]').forEach((radio) => {
   });
 });
 
-function resetProgressUI(jobId) {
-  progressPanel.classList.remove("hidden");
-  jobIdDisplay.textContent = jobId;
-  setStatusBadge("queued");
-  logList.innerHTML = "";
-  proceedBtn.classList.add("hidden");
-  hideVersionApprovalPanel();
-  artifactsPanel.classList.add("hidden");
-  artifactViewer.classList.add("hidden");
-
-  analysisPanel.classList.add("hidden");
-  stackInfo.classList.add("hidden");
-  vulnBaselineSection.classList.add("hidden");
-  vulnBaselineTableBody.innerHTML = "";
-  vulnBaselineEmpty.classList.add("hidden");
-  vulnPostStage1Section.classList.add("hidden");
-  vulnPostStage1TableBody.innerHTML = "";
-  vulnPostStage1Empty.classList.add("hidden");
-  vulnSection.classList.add("hidden");
-  vulnTableBody.innerHTML = "";
-  vulnEmpty.classList.add("hidden");
-  vulnFinalSection.classList.add("hidden");
-  vulnFinalTableBody.innerHTML = "";
-  vulnFinalEmpty.classList.add("hidden");
-}
-
 jobForm.addEventListener("submit", async (ev) => {
   ev.preventDefault();
   formError.classList.add("hidden");
@@ -82,8 +56,10 @@ jobForm.addEventListener("submit", async (ev) => {
       throw new Error(body.detail || `HTTP ${res.status}`);
     }
     const body = await res.json();
-    resetProgressUI(body.job_id);
-    connectSSE(body.job_id);
+    // Progress/analysis/artifacts live only on job.html now (index.html no
+    // longer carries that markup or job-view.js) -- hand off there instead
+    // of driving SSE inline.
+    location.href = `job.html?job=${encodeURIComponent(body.job_id)}`;
   } catch (err) {
     formError.textContent = `작업 시작 실패: ${err.message}`;
     formError.classList.remove("hidden");
