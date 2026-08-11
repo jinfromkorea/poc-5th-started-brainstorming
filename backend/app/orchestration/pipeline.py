@@ -28,11 +28,13 @@ from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.checkpoint.git_repo import current_head, diff_since, resolve_ingest_baseline
 from app.config import Settings
+from app.handoff.guide_builder import build_handoff_guide
 from app.ingest.errors import IngestError
 from app.ingest.maven_detect import detect_external_parent, read_declared_version
 from app.ingest.workspace import SourceSpec, ingest
@@ -40,7 +42,7 @@ from app.models.job import Job, JobEvent, TERMINAL_JOB_STATUSES
 from app.mvnrewrite.mvn_client import mvn_effective_pom
 from app.mvnrewrite.pom_parser import extract_versions
 from app.mvnrewrite.subprocess_runner import build_log_path
-from app.orchestration.multi_step import run_stage1_migration
+from app.orchestration.multi_step import TARGET_STACK_SUMMARY, run_stage1_migration, verify_after_manual_fix
 from app.orchestration.stage2_loop import run_stage2_patches
 from app.scan.combined import run_combined_scan
 from app.scan.merge import Vulnerability
@@ -311,7 +313,13 @@ async def run_pipeline_resume_after_version_confirm(
         detected = extract_versions(output_dir / "effective-pom.xml")  # Stage 0가 이미 만들어둔 파일 재사용
 
         report_sections: list[str] = []
-        needs_handoff = False
+        # Tracks *which* stage last set a handoff, not just whether one
+        # happened -- job status distinguishes stage1_needs_handoff from
+        # stage2_needs_handoff (spec: docs/superpowers/specs/2026-08-11-job-
+        # status-stage-split-design.md). Only one of the two blocks below can
+        # ever run per call (Stage 1 handoff routes into awaiting_approval
+        # before Stage 2 would run), so a single slot is enough.
+        handoff_stage: Literal["stage1", "stage2"] | None = None
         stage2_vulns: list[Vulnerability] = []
 
         if run_stage1:
@@ -346,7 +354,7 @@ async def run_pipeline_resume_after_version_confirm(
             if stage1_result.status == "needs_handoff" and stage1_result.handoff_guide:
                 handoff_dir.mkdir(parents=True, exist_ok=True)
                 (handoff_dir / "stage1-guide.md").write_text(stage1_result.handoff_guide, encoding="utf-8")
-                needs_handoff = True
+                handoff_stage = "stage1"
 
             # Always scan right after Stage 1, regardless of whether Stage 2
             # was requested -- this is how much the migration alone resolved,
@@ -359,7 +367,7 @@ async def run_pipeline_resume_after_version_confirm(
             await emit("vulnerabilities_post_stage1", {"vulnerabilities": [asdict(v) for v in post_stage1_vulns]})
             await log(f"{len(post_stage1_vulns)}개 취약점 남음 (마이그레이션 후)")
 
-            if run_stage2 and not needs_handoff:
+            if run_stage2 and handoff_stage is None:
                 stage2_vulns = post_stage1_vulns
         elif run_stage2:
             # Stage 1을 안 돌렸으므로 work/는 Stage 0의 베이스라인 스캔 이후
@@ -371,14 +379,15 @@ async def run_pipeline_resume_after_version_confirm(
         # A Stage 1 gap doesn't stop mattering just because Stage 2 is about
         # to run on top of it -- pause for a human to explicitly opt into
         # continuing, rather than silently barreling into Stage 2 next.
-        awaiting_stage2_approval = run_stage1 and needs_handoff and run_stage2
+        awaiting_stage2_approval = handoff_stage == "stage1" and run_stage2
 
         if run_stage2 and not awaiting_stage2_approval:
             stage2_report, stage2_needs_handoff = await _run_stage2_block(
                 emit, log, job_id, work_dir, output_dir, baseline, handoff_dir, settings, stage2_vulns
             )
             report_sections.append(stage2_report)
-            needs_handoff = needs_handoff or stage2_needs_handoff
+            if stage2_needs_handoff:
+                handoff_stage = "stage2"
 
         if awaiting_stage2_approval:
             diff_text = diff_since(work_dir, settings, ingest_baseline)
@@ -396,7 +405,7 @@ async def run_pipeline_resume_after_version_confirm(
         final_report = "\n\n---\n\n".join(report_sections) if report_sections else "변경 사항 없음."
         (output_dir / "report.md").write_text(final_report, encoding="utf-8")
 
-        final_status = "needs_handoff" if needs_handoff else "success"
+        final_status = f"{handoff_stage}_needs_handoff" if handoff_stage else "success"
         await set_job_status(session_factory, job_id, final_status, report_markdown=final_report)
         await emit("status", {"status": final_status})
 
@@ -444,7 +453,7 @@ async def run_pipeline_resume_stage2(job_id: str, settings: Settings, session_fa
         else:
             await log("취약점 재스캔 (2단계 패치 대상 선정)")
             vulns = await run_combined_scan(work_dir, output_dir, settings)
-        stage2_report, _stage2_needs_handoff = await _run_stage2_block(
+        stage2_report, stage2_needs_handoff = await _run_stage2_block(
             emit, log, job_id, work_dir, output_dir, stage_baseline, handoff_dir, settings, vulns
         )
 
@@ -456,9 +465,97 @@ async def run_pipeline_resume_stage2(job_id: str, settings: Settings, session_fa
         (output_dir / "report.md").write_text(final_report, encoding="utf-8")
 
         # This resume path only ever runs because Stage 1 already ended
-        # needs_handoff -- that gap is still there in the codebase no matter
-        # how Stage 2 turns out, so the job's final status stays needs_handoff.
-        final_status = "needs_handoff"
+        # stage1_needs_handoff -- if Stage 2 also hands off here, that's the
+        # more actionable/newer problem so it wins; otherwise Stage 1's own
+        # gap is still there (approving /proceed doesn't make it go away),
+        # so the status reverts to reflecting that.
+        final_status = "stage2_needs_handoff" if stage2_needs_handoff else "stage1_needs_handoff"
+        await set_job_status(session_factory, job_id, final_status, report_markdown=final_report)
+        await emit("status", {"status": final_status})
+
+    except asyncio.CancelledError:
+        await _finalize_cancelled(job_id, settings, session_factory)
+        raise
+    except Exception as exc:  # noqa: BLE001 -- same rationale as run_pipeline
+        await set_job_status(session_factory, job_id, "failed", error_message=str(exc))
+        await emit("status", {"status": "failed", "error": str(exc)})
+
+
+async def run_pipeline_resume_stage1_after_handoff(
+    job_id: str, settings: Settings, session_factory: sessionmaker[Session]
+) -> None:
+    """Scheduled by POST /jobs/{id}/resume-stage1 for a job sitting at
+    status="stage1_needs_handoff". work_dir is whatever a human left it as
+    after manually fixing the code that blocked Stage 1 -- see
+    docs/superpowers/specs/2026-08-11-stage1-handoff-resume-design.md. Only
+    ever reachable from stage1_needs_handoff, which (per docs/superpowers/
+    specs/2026-08-11-job-status-stage-split-design.md §6) means Stage 2 --
+    if it was requested at all -- has already run to completion, so this
+    never needs to touch Stage 2."""
+    emit, log = make_emit_log(session_factory, job_id)
+
+    with session_factory() as session:
+        job = session.get(Job, job_id)
+        prior_report = job.report_markdown or ""
+
+    work_dir = settings.jobs_dir / job_id / "work"
+    output_dir = settings.jobs_dir / job_id / "output"
+    handoff_dir = output_dir / "handoff"
+    ingest_baseline = resolve_ingest_baseline(work_dir, settings)
+
+    await set_job_status(session_factory, job_id, "running")
+    await emit("status", {"status": "running"})
+
+    try:
+        ok, build_output = await verify_after_manual_fix(work_dir, settings, on_log=log)
+
+        if not ok:
+            guide = build_handoff_guide(
+                description="인수인계 후 수동 수정 확인",
+                mechanism_used=None,
+                messages=[],
+                last_build_output=build_output,
+                target_summary=TARGET_STACK_SUMMARY,
+            )
+            handoff_dir.mkdir(parents=True, exist_ok=True)
+            (handoff_dir / "stage1-guide.md").write_text(guide, encoding="utf-8")
+            await set_job_status(session_factory, job_id, "stage1_needs_handoff")
+            await emit("status", {"status": "stage1_needs_handoff"})
+            return
+
+        baseline = current_head(work_dir, settings)
+
+        effective_pom_path = output_dir / "effective-pom.xml"
+        await mvn_effective_pom(
+            work_dir, effective_pom_path, settings,
+            log_path=build_log_path(output_dir, "stage1", "mvn-effective-pom-resume"),
+        )
+        detected = extract_versions(effective_pom_path)
+        await log(
+            f"재분석 결과: Java {detected.java_version} / Spring Boot {detected.spring_boot_version} / "
+            f"Spring Cloud {detected.spring_cloud_version} / Spring AI {detected.spring_ai_version}"
+        )
+
+        stage1_result = await run_stage1_migration(job_id, work_dir, detected, baseline, settings, on_log=log)
+
+        stage1_guide_path = handoff_dir / "stage1-guide.md"
+        if stage1_result.status == "needs_handoff" and stage1_result.handoff_guide:
+            handoff_dir.mkdir(parents=True, exist_ok=True)
+            stage1_guide_path.write_text(stage1_result.handoff_guide, encoding="utf-8")
+        elif stage1_guide_path.exists():
+            # The first attempt's guide is now stale -- leaving it would make
+            # output/handoff/ claim "still needs a manual fix" for a job that
+            # just finished successfully.
+            stage1_guide_path.unlink()
+
+        await log("결과물 생성 중...")
+        diff_text = diff_since(work_dir, settings, ingest_baseline)
+        (output_dir / "patch.diff").write_text(diff_text, encoding="utf-8")
+
+        final_report = f"{prior_report}\n\n---\n\n{stage1_result.report}"
+        (output_dir / "report.md").write_text(final_report, encoding="utf-8")
+
+        final_status = "stage1_needs_handoff" if stage1_result.status == "needs_handoff" else "success"
         await set_job_status(session_factory, job_id, final_status, report_markdown=final_report)
         await emit("status", {"status": final_status})
 

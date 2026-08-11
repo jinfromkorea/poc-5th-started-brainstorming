@@ -25,11 +25,21 @@ from app.models.db import Base
 # 2026-08-10-stage0-version-scan-restructure-design.md). Deliberately NOT
 # terminal, same reasoning as awaiting_approval below.
 #
-# "awaiting_approval": Stage 1 ended needs_handoff and Stage 2 was requested
-# -- the pipeline stops instead of auto-continuing into Stage 2, until a
-# human calls POST /jobs/{id}/proceed. Deliberately NOT terminal (see below)
-# -- a client with an open SSE connection just keeps waiting and picks up
-# Stage 2's events live once approved, no reconnect needed.
+# "awaiting_approval": Stage 1 ended stage1_needs_handoff and Stage 2 was
+# requested -- the pipeline stops instead of auto-continuing into Stage 2,
+# until a human calls POST /jobs/{id}/proceed. Deliberately NOT terminal
+# (see below) -- a client with an open SSE connection just keeps waiting and
+# picks up Stage 2's events live once approved, no reconnect needed.
+#
+# "stage1_needs_handoff" / "stage2_needs_handoff": split from a single
+# generic "needs_handoff" (spec: docs/superpowers/specs/2026-08-11-job-
+# status-stage-split-design.md) so the job row itself says which stage
+# actually blocked, instead of requiring a human to open output/handoff/ and
+# infer it from filenames. Whichever stage set the status last "wins" when
+# both would otherwise apply (e.g. Stage 1 handed off, a human approved
+# Stage 2 anyway via /proceed, and Stage 2 also hands off) -- Stage 1's own
+# gap is still visible via its still-present handoff guide file, so nothing
+# is lost, just not double-encoded in status.
 #
 # "cancelled": a human force-stopped the job via POST /jobs/{id}/cancel
 # (spec: docs/superpowers/specs/2026-08-08-job-cancellation-design.md). IS
@@ -41,11 +51,14 @@ JOB_STATUSES = (
     "awaiting_version_approval",
     "awaiting_approval",
     "success",
-    "needs_handoff",
+    "stage1_needs_handoff",
+    "stage2_needs_handoff",
     "failed",
     "cancelled",
 )
-TERMINAL_JOB_STATUSES = frozenset({"success", "needs_handoff", "failed", "cancelled"})
+TERMINAL_JOB_STATUSES = frozenset(
+    {"success", "stage1_needs_handoff", "stage2_needs_handoff", "failed", "cancelled"}
+)
 
 
 class Job(Base):

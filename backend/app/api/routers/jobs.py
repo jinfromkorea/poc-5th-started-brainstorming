@@ -25,6 +25,7 @@ from app.orchestration.pipeline import (
     _finalize_cancelled,
     run_pipeline,
     run_pipeline_resume_after_version_confirm,
+    run_pipeline_resume_stage1_after_handoff,
     run_pipeline_resume_stage2,
 )
 from app.schemas.job import ConfirmVersionRequest, JobCreateResponse, JobStatusResponse
@@ -194,6 +195,32 @@ async def proceed_job(
     factory = session_factory(settings)
     manager = get_job_manager(settings.max_concurrent_repos)
     manager.start(job_id, lambda: run_pipeline_resume_stage2(job_id, settings, factory))
+
+    return JobCreateResponse(job_id=job_id, status="running")
+
+
+@router.post("/{job_id}/resume-stage1", response_model=JobCreateResponse)
+async def resume_stage1(
+    job_id: str,
+    settings: Settings = Depends(get_settings),
+    db=Depends(get_db_session),
+) -> JobCreateResponse:
+    """Resumes Stage 1 after a human manually fixed the code that blocked it
+    (spec: docs/superpowers/specs/2026-08-11-stage1-handoff-resume-design.md).
+    Gated purely on status -- see spec's 범위 section for why run_stage2
+    doesn't need a separate check here."""
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"unknown job_id: {job_id}")
+    if job.status != "stage1_needs_handoff":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"job {job_id} is not resumable (status={job.status})",
+        )
+
+    factory = session_factory(settings)
+    manager = get_job_manager(settings.max_concurrent_repos)
+    manager.start(job_id, lambda: run_pipeline_resume_stage1_after_handoff(job_id, settings, factory))
 
     return JobCreateResponse(job_id=job_id, status="running")
 

@@ -1,6 +1,6 @@
 "use strict";
 
-const TERMINAL_STATUSES = new Set(["success", "needs_handoff", "failed", "cancelled"]);
+const TERMINAL_STATUSES = new Set(["success", "stage1_needs_handoff", "stage2_needs_handoff", "failed", "cancelled"]);
 const SEVERITY_ORDER = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, UNKNOWN: 4 };
 
 const analysisPanel = el("analysis-panel");
@@ -45,6 +45,7 @@ const viewDiffBtn = el("view-diff-btn");
 const viewReportBtn = el("view-report-btn");
 const viewFilesLink = el("view-files-link");
 const handoffList = el("handoff-list");
+const resumeStage1Btn = el("resume-stage1-btn");
 const artifactViewer = el("artifact-viewer");
 const artifactViewerTitle = el("artifact-viewer-title");
 const artifactViewerContent = el("artifact-viewer-content");
@@ -391,6 +392,32 @@ function showProceedButton(jobId) {
   };
 }
 
+function showResumeStage1Button(jobId) {
+  resumeStage1Btn.classList.remove("hidden");
+  resumeStage1Btn.disabled = false;
+  resumeStage1Btn.textContent = "인수인계 후 재개 (수동 수정 확인)";
+  resumeStage1Btn.onclick = async () => {
+    resumeStage1Btn.disabled = true;
+    resumeStage1Btn.textContent = "재개 중...";
+    try {
+      const res = await fetch(apiUrl(`/jobs/${jobId}/resume-stage1`), { method: "POST", headers: authHeaders() });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || `HTTP ${res.status}`);
+      }
+      resumeStage1Btn.classList.add("hidden");
+      // stage1_needs_handoff is terminal, so the SSE connection from the
+      // original run already closed (see the "status" handler below) --
+      // reconnect to receive this new run's events live.
+      connectSSE(jobId);
+    } catch (err) {
+      appendLog(`재개 요청 실패: ${err.message}`, true);
+      resumeStage1Btn.disabled = false;
+      resumeStage1Btn.textContent = "인수인계 후 재개 (수동 수정 확인)";
+    }
+  };
+}
+
 function showStopButton(jobId) {
   stopBtn.classList.remove("hidden");
   stopBtn.disabled = false;
@@ -466,6 +493,11 @@ function connectSSE(jobId) {
       showProceedButton(jobId);
     } else {
       proceedBtn.classList.add("hidden");
+    }
+    if (data.status === "stage1_needs_handoff") {
+      showResumeStage1Button(jobId);
+    } else {
+      resumeStage1Btn.classList.add("hidden");
     }
     if (TERMINAL_STATUSES.has(data.status)) {
       stopBtn.classList.add("hidden");

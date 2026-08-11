@@ -21,7 +21,12 @@ from app.models.db import init_db, session_factory
 from app.models.job import Job, JobEvent
 from app.mvnrewrite.pom_parser import DetectedVersions
 from app.orchestration.multi_step import MigrationRunResult
-from app.orchestration.pipeline import run_pipeline, run_pipeline_resume_after_version_confirm, run_pipeline_resume_stage2
+from app.orchestration.pipeline import (
+    run_pipeline,
+    run_pipeline_resume_after_version_confirm,
+    run_pipeline_resume_stage1_after_handoff,
+    run_pipeline_resume_stage2,
+)
 from app.orchestration.planning import MigrationPlan
 from app.orchestration.stage2_loop import Stage2RunResult
 from app.scan.merge import Vulnerability
@@ -264,7 +269,7 @@ async def test_stage1_needs_handoff_writes_guide_file(monkeypatch, settings, db,
 
     with db() as session:
         job = session.get(Job, job_id)
-        assert job.status == "needs_handoff"
+        assert job.status == "stage1_needs_handoff"
 
     guide_path = job_paths.output / "handoff" / "stage1-guide.md"
     assert guide_path.exists()
@@ -481,7 +486,11 @@ async def test_run_pipeline_resume_stage2_completes_after_approval(monkeypatch, 
 
     with db() as session:
         job = session.get(Job, job_id)
-        assert job.status == "needs_handoff"
+        # Stage 2 itself fully succeeded here -- the final status reflects
+        # that Stage 1's original gap is what's still unresolved, not a
+        # blanket "needs_handoff" regardless of how Stage 2 turned out (spec:
+        # docs/superpowers/specs/2026-08-11-job-status-stage-split-design.md).
+        assert job.status == "stage1_needs_handoff"
         assert "stage1 report" in job.report_markdown
         assert "stage2 report" in job.report_markdown
 
@@ -489,6 +498,57 @@ async def test_run_pipeline_resume_stage2_completes_after_approval(monkeypatch, 
     report_text = (job_paths.output / "report.md").read_text(encoding="utf-8")
     assert "stage1 report" in report_text
     assert "stage2 report" in report_text
+
+
+async def test_run_pipeline_resume_stage2_that_also_hands_off_reports_stage2(monkeypatch, settings, db, job_paths):
+    """Same setup as test_run_pipeline_resume_stage2_completes_after_approval,
+    but Stage 2 itself also ends up needing a handoff on some CVE -- that's
+    the more actionable/newer problem, so it wins over Stage 1's original gap
+    (spec: docs/superpowers/specs/2026-08-11-job-status-stage-split-design.md)."""
+    job_id = job_paths.root.name
+    settings.jobs_data_dir = str(job_paths.root.parent)
+
+    git_init_and_baseline_commit(job_paths.work, settings)
+
+    with db() as session:
+        session.add(
+            Job(
+                id=job_id,
+                source_type="zip",
+                source_ref="x.zip",
+                run_stage1=True,
+                run_stage2=True,
+                status="awaiting_approval",
+                report_markdown="# stage1 report\n4.0에서 막혔습니다.",
+            )
+        )
+        session.commit()
+
+    vuln = Vulnerability("CVE-2026-0003", "com.example:lib3", "3.0.0", "3.0.1", 9.1, "CRITICAL", "trivy")
+
+    async def fake_scan(work_dir, output_dir, settings_):
+        return [vuln]
+
+    monkeypatch.setattr("app.orchestration.pipeline.run_combined_scan", fake_scan)
+
+    async def fake_stage2_hands_off(job_id, work_dir, vulns, baseline, settings_, on_log=None):
+        from app.orchestration.stage2_loop import VulnOutcome
+
+        return Stage2RunResult(
+            outcomes=[VulnOutcome(vulnerability=vuln, status="needs_handoff", handoff_guide="# 가이드\nCVE-2026-0003")],
+            final_diff="",
+            report="# stage2 report\nCVE-2026-0003 막힘",
+        )
+
+    monkeypatch.setattr("app.orchestration.pipeline.run_stage2_patches", fake_stage2_hands_off)
+
+    await run_pipeline_resume_stage2(job_id=job_id, settings=settings, session_factory=db)
+
+    with db() as session:
+        job = session.get(Job, job_id)
+        assert job.status == "stage2_needs_handoff"
+
+    assert (job_paths.output / "handoff" / "stage2-CVE-2026-0003-guide.md").exists()
 
 
 async def test_stage1_success_commits_survive_a_failed_first_stage2_cve(monkeypatch, settings, db, job_paths):
@@ -691,6 +751,143 @@ async def test_ingest_failure_marks_job_failed(monkeypatch, settings, db, job_pa
         job = session.get(Job, "job-4")
         assert job.status == "failed"
         assert "Gradle" in job.error_message
+
+
+def _create_stage1_needs_handoff_job(db, job_id: str, prior_report: str = "# stage1 report\n막혔습니다.") -> None:
+    with db() as session:
+        session.add(
+            Job(
+                id=job_id,
+                source_type="zip",
+                source_ref="x.zip",
+                run_stage1=True,
+                run_stage2=False,
+                status="stage1_needs_handoff",
+                report_markdown=prior_report,
+            )
+        )
+        session.commit()
+
+
+async def test_resume_stage1_after_handoff_verify_fails_stays_needs_handoff(monkeypatch, settings, db, job_paths):
+    job_id = job_paths.root.name
+    settings.jobs_data_dir = str(job_paths.root.parent)
+    git_init_and_baseline_commit(job_paths.work, settings)
+    _create_stage1_needs_handoff_job(db, job_id)
+
+    async def failing_verify(work_dir, settings_, on_log=None):
+        return False, "여전히 컴파일 안 됨"
+
+    reanalysis_calls: list[object] = []
+
+    async def must_not_reanalyze(*args, **kwargs):
+        reanalysis_calls.append(args)
+        raise AssertionError("mvn_effective_pom must not run when verify fails")
+
+    monkeypatch.setattr("app.orchestration.pipeline.verify_after_manual_fix", failing_verify)
+    monkeypatch.setattr("app.orchestration.pipeline.mvn_effective_pom", must_not_reanalyze)
+
+    async def must_not_replan(*args, **kwargs):
+        raise AssertionError("run_stage1_migration must not run when verify fails")
+
+    monkeypatch.setattr("app.orchestration.pipeline.run_stage1_migration", must_not_replan)
+
+    await run_pipeline_resume_stage1_after_handoff(job_id=job_id, settings=settings, session_factory=db)
+
+    assert reanalysis_calls == []
+    with db() as session:
+        job = session.get(Job, job_id)
+        assert job.status == "stage1_needs_handoff"
+
+    guide_text = (job_paths.output / "handoff" / "stage1-guide.md").read_text(encoding="utf-8")
+    assert "여전히 컴파일" in guide_text
+
+
+async def test_resume_stage1_after_handoff_verify_succeeds_completes_migration(monkeypatch, settings, db, job_paths):
+    job_id = job_paths.root.name
+    settings.jobs_data_dir = str(job_paths.root.parent)
+    git_init_and_baseline_commit(job_paths.work, settings)
+    _create_stage1_needs_handoff_job(db, job_id, prior_report="# stage1 report (1차 시도)\n막혔습니다.")
+
+    # A stale guide left over from the first (failed) attempt -- must be
+    # deleted once the resume succeeds all the way through (self-review
+    # finding, spec: docs/superpowers/specs/2026-08-11-stage1-handoff-
+    # resume-design.md).
+    stale_guide = job_paths.output / "handoff" / "stage1-guide.md"
+    stale_guide.parent.mkdir(parents=True, exist_ok=True)
+    stale_guide.write_text("# 낡은 가이드", encoding="utf-8")
+
+    async def passing_verify(work_dir, settings_, on_log=None):
+        return True, "BUILD SUCCESS"
+
+    monkeypatch.setattr("app.orchestration.pipeline.verify_after_manual_fix", passing_verify)
+    monkeypatch.setattr("app.orchestration.pipeline.mvn_effective_pom", _async_noop_writes_file)
+    monkeypatch.setattr(
+        "app.orchestration.pipeline.extract_versions",
+        lambda path: DetectedVersions(java_version="21", spring_boot_version="4.1.0", spring_cloud_version=None, spring_ai_version=None),
+    )
+
+    async def fake_stage1_no_more_gap(job_id, work_dir, detected, baseline, settings_, parent_target_version=None, on_log=None):
+        return MigrationRunResult(
+            plan=MigrationPlan(steps=[]),
+            outcomes=[],
+            status="no_gap",
+            final_diff="",
+            report="# stage1 report (재개 후)\n나머지 계획 없음, 완료.",
+            handoff_guide=None,
+        )
+
+    monkeypatch.setattr("app.orchestration.pipeline.run_stage1_migration", fake_stage1_no_more_gap)
+    monkeypatch.setattr("app.orchestration.pipeline.diff_since", lambda work_dir, settings_, baseline: "diff --git a/pom.xml\n")
+
+    await run_pipeline_resume_stage1_after_handoff(job_id=job_id, settings=settings, session_factory=db)
+
+    with db() as session:
+        job = session.get(Job, job_id)
+        assert job.status == "success"
+        assert "1차 시도" in job.report_markdown
+        assert "재개 후" in job.report_markdown
+
+    assert not stale_guide.exists()
+
+
+async def test_resume_stage1_after_handoff_verify_succeeds_but_next_step_blocks(monkeypatch, settings, db, job_paths):
+    job_id = job_paths.root.name
+    settings.jobs_data_dir = str(job_paths.root.parent)
+    git_init_and_baseline_commit(job_paths.work, settings)
+    _create_stage1_needs_handoff_job(db, job_id)
+
+    async def passing_verify(work_dir, settings_, on_log=None):
+        return True, "BUILD SUCCESS"
+
+    monkeypatch.setattr("app.orchestration.pipeline.verify_after_manual_fix", passing_verify)
+    monkeypatch.setattr("app.orchestration.pipeline.mvn_effective_pom", _async_noop_writes_file)
+    monkeypatch.setattr(
+        "app.orchestration.pipeline.extract_versions",
+        lambda path: DetectedVersions(java_version="21", spring_boot_version="4.0.0", spring_cloud_version=None, spring_ai_version=None),
+    )
+
+    async def fake_stage1_blocks_again(job_id, work_dir, detected, baseline, settings_, parent_target_version=None, on_log=None):
+        return MigrationRunResult(
+            plan=MigrationPlan(steps=[]),
+            outcomes=[],
+            status="needs_handoff",
+            final_diff="",
+            report="# stage1 report (재개 후)\n다음 스텝에서 또 막힘.",
+            handoff_guide="# AI 인수인계 가이드\n4.0 -> 4.1에서 또 막힘",
+        )
+
+    monkeypatch.setattr("app.orchestration.pipeline.run_stage1_migration", fake_stage1_blocks_again)
+    monkeypatch.setattr("app.orchestration.pipeline.diff_since", lambda work_dir, settings_, baseline: "")
+
+    await run_pipeline_resume_stage1_after_handoff(job_id=job_id, settings=settings, session_factory=db)
+
+    with db() as session:
+        job = session.get(Job, job_id)
+        assert job.status == "stage1_needs_handoff"
+
+    guide_text = (job_paths.output / "handoff" / "stage1-guide.md").read_text(encoding="utf-8")
+    assert "또 막힘" in guide_text
 
 
 async def _async_noop_writes_file(work_dir, output_path, settings_, log_path=None):

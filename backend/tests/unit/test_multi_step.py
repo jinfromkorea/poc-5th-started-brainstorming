@@ -284,3 +284,31 @@ async def test_parent_target_version_failure_skips_reanalysis_and_rest_of_plan(m
     assert len(result.plan.steps) == 1  # rest of the plan was never even built
     assert result.plan.steps[0].kind == "parent_pom"
     assert result.handoff_guide is not None
+
+
+async def test_verify_after_manual_fix_reports_success(monkeypatch, settings, work_dir):
+    from app.orchestration.multi_step import verify_after_manual_fix
+
+    monkeypatch.setattr(
+        "app.orchestration.multi_step.mvn_test_compile",
+        AsyncMock(return_value=SubprocessResult(returncode=0, output="BUILD SUCCESS", log_path=None)),
+    )
+
+    ok, output = await verify_after_manual_fix(work_dir, settings)
+
+    assert ok is True
+    assert output == "BUILD SUCCESS"
+
+
+async def test_verify_after_manual_fix_reports_failure(monkeypatch, settings, work_dir):
+    from app.orchestration.multi_step import verify_after_manual_fix
+
+    monkeypatch.setattr(
+        "app.orchestration.multi_step.mvn_test_compile",
+        AsyncMock(return_value=SubprocessResult(returncode=1, output="still broken", log_path=None)),
+    )
+
+    ok, output = await verify_after_manual_fix(work_dir, settings)
+
+    assert ok is False
+    assert output == "still broken"

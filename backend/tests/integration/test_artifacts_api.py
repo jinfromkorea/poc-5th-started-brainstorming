@@ -40,7 +40,7 @@ def _wait_for_terminal_status(client: TestClient, job_id: str, timeout: float = 
     while time.monotonic() < deadline:
         resp = client.get(f"/jobs/{job_id}")
         body = resp.json()
-        if body["status"] in ("success", "needs_handoff", "failed"):
+        if body["status"] in ("success", "stage1_needs_handoff", "stage2_needs_handoff", "failed"):
             return body
         time.sleep(0.05)
     raise AssertionError(f"job {job_id} did not reach a terminal status within {timeout}s")

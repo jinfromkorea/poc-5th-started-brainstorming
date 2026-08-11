@@ -430,7 +430,8 @@ button.secondary:hover:not(:disabled) {
   color: var(--info);
 }
 
-.status-needs_handoff {
+.status-stage1_needs_handoff,
+.status-stage2_needs_handoff {
   background: var(--warning-bg);
   color: var(--warning);
 }

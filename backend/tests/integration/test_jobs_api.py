@@ -52,7 +52,7 @@ def _wait_for_terminal_status(client: TestClient, job_id: str, timeout: float = 
     while time.monotonic() < deadline:
         resp = client.get(f"/jobs/{job_id}")
         body = resp.json()
-        if body["status"] in ("success", "needs_handoff", "failed", "cancelled"):
+        if body["status"] in ("success", "stage1_needs_handoff", "stage2_needs_handoff", "failed", "cancelled"):
             return body
         time.sleep(0.05)
     raise AssertionError(f"job {job_id} did not reach a terminal status within {timeout}s")
@@ -230,6 +230,93 @@ def test_proceed_job_not_awaiting_approval_returns_409(app_client):
 
     resp = app_client.post(f"/jobs/{job_id}/proceed")
     assert resp.status_code == 409
+
+
+def test_resume_stage1_unknown_job_returns_404(app_client):
+    resp = app_client.post("/jobs/does-not-exist/resume-stage1")
+    assert resp.status_code == 404
+
+
+def test_resume_stage1_rejected_when_not_stage1_needs_handoff(app_client):
+    zip_content = _zip_bytes({"pom.xml": _POM})
+    create_resp = app_client.post(
+        "/jobs",
+        data={"run_stage1": "false", "run_stage2": "false"},
+        files={"zip_file": ("project.zip", zip_content, "application/zip")},
+    )
+    job_id = create_resp.json()["job_id"]
+    _wait_for_terminal_status(app_client, job_id)  # ends "success", never stage1_needs_handoff
+
+    resp = app_client.post(f"/jobs/{job_id}/resume-stage1")
+    assert resp.status_code == 409
+
+
+def _put_job_at_status(app_client, job_id: str, status: str, run_stage1: bool = True, run_stage2: bool = False) -> None:
+    """Directly writes a Job row into the app's DB, bypassing the pipeline
+    entirely -- used to reach statuses (stage1_needs_handoff,
+    stage2_needs_handoff) that would otherwise require a full mocked
+    ingest+Stage0+Stage1 run just to set up a gate test."""
+    from app.models.db import session_factory as make_session_factory
+    from app.models.job import Job
+
+    factory = make_session_factory(app_client.app.dependency_overrides[get_settings]())
+    with factory() as session:
+        session.add(
+            Job(
+                id=job_id,
+                source_type="zip",
+                source_ref="x.zip",
+                run_stage1=run_stage1,
+                run_stage2=run_stage2,
+                status=status,
+                report_markdown="# stage1 report\n막혔습니다.",
+            )
+        )
+        session.commit()
+
+
+def test_resume_stage1_rejected_when_stage2_needs_handoff(app_client):
+    _put_job_at_status(app_client, "resume-test-1", "stage2_needs_handoff", run_stage1=True, run_stage2=True)
+    resp = app_client.post("/jobs/resume-test-1/resume-stage1")
+    assert resp.status_code == 409
+
+
+def test_resume_stage1_allowed_when_run_stage2_true(app_client, monkeypatch, tmp_path):
+    """A job with run_stage1=true, run_stage2=true that reached
+    stage1_needs_handoff means Stage 2 already ran to completion (spec:
+    docs/superpowers/specs/2026-08-11-job-status-stage-split-design.md §6)
+    -- the endpoint must not reject it just because run_stage2 was true."""
+    from app.checkpoint.git_repo import git_init_and_baseline_commit
+
+    job_id = "resume-test-2"
+    settings_ = app_client.app.dependency_overrides[get_settings]()
+    work_dir = settings_.jobs_dir / job_id / "work"
+    work_dir.mkdir(parents=True)
+    (work_dir / "pom.xml").write_text("<project/>")
+    git_init_and_baseline_commit(work_dir, settings_)
+
+    _put_job_at_status(app_client, job_id, "stage1_needs_handoff", run_stage1=True, run_stage2=True)
+
+    async def passing_verify(work_dir_, settings__, on_log=None):
+        return True, "BUILD SUCCESS"
+
+    async def fake_stage1_no_gap(job_id_, work_dir_, detected, baseline, settings__, parent_target_version=None, on_log=None):
+        from app.orchestration.multi_step import MigrationRunResult
+        from app.orchestration.planning import MigrationPlan
+
+        return MigrationRunResult(
+            plan=MigrationPlan(steps=[]), outcomes=[], status="no_gap", final_diff="", report="# 재개 완료", handoff_guide=None
+        )
+
+    monkeypatch.setattr("app.orchestration.pipeline.verify_after_manual_fix", passing_verify)
+    monkeypatch.setattr("app.orchestration.pipeline.mvn_effective_pom", _fast_mvn_effective_pom)
+    monkeypatch.setattr("app.orchestration.pipeline.run_stage1_migration", fake_stage1_no_gap)
+
+    resp = app_client.post(f"/jobs/{job_id}/resume-stage1")
+    assert resp.status_code == 200, resp.text
+
+    final = _wait_for_terminal_status(app_client, job_id)
+    assert final["status"] == "success"
 
 
 def test_cancel_unknown_job_returns_404(app_client):

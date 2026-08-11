@@ -17,7 +17,7 @@ from typing import Literal
 from app.checkpoint.git_repo import commit_checkpoint, current_head, diff_since, reset_to_checkpoint
 from app.config import Settings
 from app.handoff.guide_builder import build_handoff_guide
-from app.mvnrewrite.mvn_client import mvn_effective_pom
+from app.mvnrewrite.mvn_client import mvn_effective_pom, mvn_test_compile
 from app.mvnrewrite.pom_parser import DetectedVersions, extract_versions
 from app.mvnrewrite.subprocess_runner import build_log_path
 from app.orchestration.graph_stage1 import run_stage1_step
@@ -163,3 +163,15 @@ async def run_stage1_migration(
         report=report,
         handoff_guide=handoff_guide,
     )
+
+
+async def verify_after_manual_fix(work_dir: Path, settings: Settings, on_log: LogFn = noop_log) -> tuple[bool, str]:
+    """One-shot mvn test-compile check, no AI retry -- used by Stage 1's
+    "인수인계 후 재개" (spec: docs/superpowers/specs/2026-08-11-stage1-
+    handoff-resume-design.md). The whole point is confirming a human's own
+    fix, not giving the AI another chance to diverge from what the human
+    intended."""
+    await on_log("인수인계 후 수동 수정 확인 중 (mvn test-compile)")
+    result = await mvn_test_compile(work_dir, settings)
+    await on_log(f"검증 {'통과' if result.returncode == 0 else '실패'}")
+    return result.returncode == 0, result.output

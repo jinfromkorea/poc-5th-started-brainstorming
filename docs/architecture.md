@@ -125,7 +125,7 @@ sequenceDiagram
         RESUME->>DB: status=running + emit("status")
         RESUME->>RESUME: 출력 버전 적용 → Stage1 → Stage2 → diff/report
         RESUME-->>SSE: 진행 중 log/status 이벤트 (DB에도 JobEvent로 영속)
-        RESUME->>DB: status=success|needs_handoff|failed, report_markdown 저장
+        RESUME->>DB: status=success|stage1_needs_handoff|stage2_needs_handoff|failed, report_markdown 저장
     end
     SSE-->>FE: 최종 status 이벤트 후 연결 종료
     FE->>API: GET /jobs/{id}/artifacts → diff/report/handoff 목록 조회
@@ -143,7 +143,7 @@ sequenceDiagram
 2. **1단계** (`run_stage1`이 true인 경우, `orchestration/multi_step.run_stage1_migration`) — 마이그레이션 계획 수립 → 단계별 그래프 실행. 끝나면(성공/노갭/인수인계 여부와 무관) 항상 재스캔해 `vulnerabilities_post_stage1` 이벤트로 얼마나 해소됐는지 보여준다(§7.5) — 2단계가 선택됐다면 이 재스캔 결과를 그대로 2단계 패치 대상으로 재사용한다(중복 스캔 없음).
 3. **2단계** (`run_stage2`이 true인 경우, `orchestration/stage2_loop.run_stage2_patches`) — CVE별 패치 그래프 실행. **단, 1단계가 `needs_handoff`로 끝났다면 여기서 바로 실행하지 않고 `awaiting_approval`에서 멈춘다 — §7.4 참고.** 1단계를 안 돌렸다면(2단계만 선택) Stage 0의 베이스라인 스캔 결과를 재사용한다(§4.1) — work/가 그 이후 안 바뀌었기 때문. 패치가 끝나면 다시 최종 스캔을 돌려 `vulnerabilities_final` 이벤트로 남은 취약점을 보여준다.
 4. **산출물 작성** — `git diff baseline..HEAD`로 `output/patch.diff`, 단계별 리포트를 이어붙인 `output/report.md`, 막힌 단계가 있으면 `output/handoff/*.md`.
-5. Job 상태를 `success` / `needs_handoff` / `failed`(또는 3번의 예외 상황이면 `awaiting_approval`)로 확정.
+5. Job 상태를 `success` / `stage1_needs_handoff` / `stage2_needs_handoff` / `failed`(또는 3번의 예외 상황이면 `awaiting_approval`)로 확정 — 어느 단계가 막았는지 상태값 자체가 구분한다(§7.4).
 
 `IngestError`는 `failed`로, 그 외 모든 예외도 `except Exception`으로 잡아 `failed`로 처리한다 — 개별 job의 실패가 서버 프로세스 전체를 죽이지 않도록 하는 것이 목적이다(주석 원문: "a job failure must never crash the server process"). 이 예외 처리는 `run_pipeline`과 `run_pipeline_resume_after_version_confirm` 양쪽 모두에 동일하게 있다.
 
@@ -226,9 +226,9 @@ stateDiagram-v2
 
 ### 7.4 1단계가 막혔을 때 2단계 진입 게이트 (HITL 승인)
 
-1단계가 `needs_handoff`로 끝났는데 2단계(취약점 스캔/패치)도 요청된 상태라면, `run_pipeline_resume_after_version_confirm`은 2단계를 곧장 이어서 실행하지 않는다 — Job 상태를 `awaiting_approval`로 남기고 멈춘다(그때까지의 diff/report는 저장됨). 1단계의 미해결 갭은 2단계가 그 위에서 실행된다고 사라지는 게 아니기 때문에, 사람이 명시적으로 계속 진행할지 판단하게 한다.
+1단계가 `stage1_needs_handoff`로 끝났는데 2단계(취약점 스캔/패치)도 요청된 상태라면, `run_pipeline_resume_after_version_confirm`은 2단계를 곧장 이어서 실행하지 않는다 — Job 상태를 `awaiting_approval`로 남기고 멈춘다(그때까지의 diff/report는 저장됨). 1단계의 미해결 갭은 2단계가 그 위에서 실행된다고 사라지는 게 아니기 때문에, 사람이 명시적으로 계속 진행할지 판단하게 한다.
 
-아래는 Job 상태 전체 흐름이다 — Stage 0(§4.1)까지 포함해 `queued`부터 터미널 상태까지 한 번에 보여준다:
+Job의 최종 `needs_handoff` 계열 상태는 `stage1_needs_handoff`/`stage2_needs_handoff` 둘로 나뉜다(스펙: `docs/superpowers/specs/2026-08-11-job-status-stage-split-design.md`) — 어느 단계가 실제로 막았는지 상태값만 보고 알 수 있게 하기 위해서다(예전엔 하나의 `needs_handoff`였고, `output/handoff/` 안 파일명을 사람이 직접 봐야 구분됐다). 아래는 Job 상태 전체 흐름이다 — Stage 0(§4.1)까지 포함해 `queued`부터 터미널 상태까지 한 번에 보여준다:
 
 ```mermaid
 stateDiagram-v2
@@ -237,21 +237,39 @@ stateDiagram-v2
     running --> success: 1·2단계 미선택\n(Stage 0 생략)
     running --> awaiting_version_approval: 1·2단계 중 하나 이상\n(Stage 0 완료)
     awaiting_version_approval --> running: POST /jobs/{id}/confirm-version
-    running --> awaiting_approval: 1단계 needs_handoff\n+ 2단계 요청됨
+    running --> awaiting_approval: 1단계 stage1_needs_handoff\n+ 2단계 요청됨
     running --> success
-    running --> needs_handoff: 1단계 needs_handoff\n(2단계 미요청)
+    running --> stage1_needs_handoff: 1단계 handoff\n(2단계 미요청 또는\n2단계도 성공)
+    running --> stage2_needs_handoff: 2단계에서 handoff\n(1단계는 성공 또는 미요청)
     running --> failed
     awaiting_approval --> running: POST /jobs/{id}/proceed
-    running --> needs_handoff: 2단계 재개 완료\n(항상 needs_handoff로 마감)
+    running --> stage2_needs_handoff: 2단계 재개, 2단계도 handoff
+    running --> stage1_needs_handoff: 2단계 재개, 2단계는 성공\n(1단계 갭은 여전히 남음)
+    stage1_needs_handoff --> running: POST /jobs/{id}/resume-stage1\n(§7.6)
 ```
 
 - `POST /jobs/{id}/proceed`(§11)가 `run_pipeline_resume_stage2`를 백그라운드로 스케줄링한다. `work_dir`/`output_dir`는 `job_id`로부터 결정적으로 재계산되고(`{JOBS_DATA_DIR}/{job_id}/{work,output}`), 지역변수로만 들고 있던 baseline 커밋은 `checkpoint/git_repo.resolve_ingest_baseline`/`resolve_stage_baseline`이 git 히스토리(커밋 순서: ingest baseline → 출력 버전 체크포인트 → 1단계...)에서 되찾는다 — 새 DB 컬럼 없이 재개 가능.
 - `awaiting_approval`과 `awaiting_version_approval` 둘 다 의도적으로 "터미널 상태"(`models/job.py`의 `TERMINAL_JOB_STATUSES`)에 넣지 않는다 — 그 덕분에 이미 열려 있는 SSE 연결(§10)이 승인/확인 후 이어지는 이벤트를 재연결 없이 그대로 받는다.
-- 2단계까지 재개된 job은 스캔/패치 자체가 문제 없이 끝나도 최종 상태가 항상 `needs_handoff`다 — 1단계가 애초에 완전히 끝나지 못했다는 사실은 승인해서 계속 진행해도 없어지지 않기 때문.
+- `/proceed`로 재개된 2단계가 스스로도 handoff가 필요해지면 최종 상태는 `stage2_needs_handoff`(더 새롭고 실행 가능한 문제이므로) — 2단계가 문제 없이 끝나면 1단계의 원래 갭이 여전히 안 풀린 것이므로 `stage1_needs_handoff`로 되돌아간다. 두 값 모두 특별한 새 값(예: "둘 다 막힘")을 만들지 않는다 — 1단계 문제는 `/proceed`를 누른 시점에 사람이 이미 인지한 것이고, `output/handoff/stage1-guide.md`도 그대로 남아 필요하면 볼 수 있다.
 
 ### 7.5 1단계 이후 재스캔
 
-1단계가 끝나면(성공/노갭/인수인계 여부와 무관, `run_pipeline_resume_after_version_confirm`) 항상 `run_combined_scan`을 다시 돌려 `vulnerabilities_post_stage1` 이벤트로 내보낸다 — "1단계만으로 취약점이 얼마나 해소됐는지"를 2단계 선택 여부와 무관하게 보여주기 위함이다(예전에는 2단계를 선택했을 때만, 2단계 패치 대상을 뽑는 부산물로만 실행됐다). 2단계도 선택된 경우 이 스캔 결과를 그대로 2단계 패치 대상으로 재사용하므로 스캔이 두 번 도는 일은 없다. 1단계가 `needs_handoff`로 끝나 §7.4의 승인 대기에 들어간 경우, 나중에 `POST /jobs/{id}/proceed`로 재개하는 `run_pipeline_resume_stage2`는 이 결과를 다시 읽어서(`_latest_event_data`) 쓴다 — work/가 그 사이 안 바뀌었으므로 재스캔하지 않는다.
+1단계가 끝나면(성공/노갭/인수인계 여부와 무관, `run_pipeline_resume_after_version_confirm`) 항상 `run_combined_scan`을 다시 돌려 `vulnerabilities_post_stage1` 이벤트로 내보낸다 — "1단계만으로 취약점이 얼마나 해소됐는지"를 2단계 선택 여부와 무관하게 보여주기 위함이다(예전에는 2단계를 선택했을 때만, 2단계 패치 대상을 뽑는 부산물로만 실행됐다). 2단계도 선택된 경우 이 스캔 결과를 그대로 2단계 패치 대상으로 재사용하므로 스캔이 두 번 도는 일은 없다. 1단계가 `stage1_needs_handoff`로 끝나 §7.4의 승인 대기에 들어간 경우, 나중에 `POST /jobs/{id}/proceed`로 재개하는 `run_pipeline_resume_stage2`는 이 결과를 다시 읽어서(`_latest_event_data`) 쓴다 — work/가 그 사이 안 바뀌었으므로 재스캔하지 않는다.
+
+### 7.6 1단계 인수인계 후 재개 (`POST /jobs/{id}/resume-stage1`)
+
+설계 배경: [`docs/superpowers/specs/2026-08-11-stage1-handoff-resume-design.md`](superpowers/specs/2026-08-11-stage1-handoff-resume-design.md).
+
+`stage1_needs_handoff`로 끝난 job은 `work/`를 사람이 외부 AI 코딩 도구 등으로 직접 고친 뒤, 화면에서 "인수인계 후 재개" 버튼으로 이어서 진행할 수 있다. 게이트는 `job.status == "stage1_needs_handoff"` 하나뿐이다 — `run_stage2` 값은 확인하지 않는다: `stage1_needs_handoff`는 "더 이상 자동으로 진행될 게 없을 때"만 붙는 최종 상태라, 2단계가 원래 요청됐던 job이라도 이 상태에 도달했다는 것 자체가 이미 2단계가 없었거나 끝까지 성공했다는 뜻이기 때문(§7.4의 두 번째 다이어그램 분기 참고).
+
+`run_pipeline_resume_stage1_after_handoff`(`orchestration/pipeline.py`)의 순서:
+
+1. **검증** (`orchestration/multi_step.verify_after_manual_fix`) — `mvn test-compile` 한 번만 실행한다. AI 재시도는 하지 않는다 — 사람이 직접 고친 결과를 확인만 하는 동작이라, AI를 다시 태우면 사람의 의도와 다르게 또 고칠 위험이 있다(job #44에서 AI가 원래 맞았던 import를 오히려 틀리게 고친 사례가 실제로 있었다 — `docs/lessons-learned/2026-08-11-jackson3-objectmapper-migration.md`).
+2. **검증 실패** → 아무것도 커밋하지 않고 `stage1_needs_handoff`로 되돌아간다. `output/handoff/stage1-guide.md`를 최신 빌드 출력으로 덮어써서 재시도할 수 있게 한다.
+3. **검증 성공** → 체크포인트 커밋 후 `mvn effective-pom`을 다시 돌려 현재 `work/`의 실제 스택을 재분석하고(사내 parent POM 기능, §4.1과 동일한 재분석 패턴), `run_stage1_migration`을 그 값으로 다시 호출해 나머지 계획을 이어서 실행한다 — 막혔던 스텝이 몇 번째였는지는 어디에도 저장하지 않는다. 재분석된 버전이 이미 반영된 수정을 나타내므로 `build_migration_plan`이 자연스럽게 다음 스텝부터 계획을 세운다.
+4. 재개가 끝까지 성공하면 1차 시도 때 남은 `output/handoff/stage1-guide.md`를 지운다 — 안 지우면 성공한 job인데도 "아직 인수인계 필요"라는 낡은 파일이 결과물 목록에 남는다. 또 막히면 새 가이드로 덮어쓰고 다시 `stage1_needs_handoff`(반복 가능).
+
+`report_markdown`은 1차 시도 리포트 뒤에 이번 재개 결과를 이어붙인다(`run_pipeline_resume_stage2`와 동일한 패턴).
 
 ## 8. Stage 2 — 개별 CVE 패치 (`scan/`, `graph_stage2.py`, `stage2_loop.py`)
 
@@ -332,7 +350,7 @@ flowchart LR
     REPLAY --> LIVE2["이후 live 이벤트로 전환"]
 ```
 
-- `Job`: 생성 입력(소스 타입/참조, 단계 실행 여부 — `output_version`은 더 이상 입력이 아니다), 상태(`queued`→`running`→(`awaiting_version_approval`→`running`→)(`awaiting_approval`→`running`→)`success`|`needs_handoff`|`failed`), `output_version`(Stage 0 확인 후에야 채워짐), 최종 리포트를 보관. `awaiting_version_approval`은 Stage 0가 끝나고 출력 버전 확인을 기다리는 중간 상태(§4.1), `awaiting_approval`은 1단계가 막혔고 2단계도 요청된 job이 사람의 승인(`POST /jobs/{id}/proceed`, §7.4)을 기다리는 중간 상태 — 둘 다 의도적으로 터미널이 아니다.
+- `Job`: 생성 입력(소스 타입/참조, 단계 실행 여부 — `output_version`은 더 이상 입력이 아니다), 상태(`queued`→`running`→(`awaiting_version_approval`→`running`→)(`awaiting_approval`→`running`→)`success`|`stage1_needs_handoff`|`stage2_needs_handoff`|`failed`), `output_version`(Stage 0 확인 후에야 채워짐), 최종 리포트를 보관. `awaiting_version_approval`은 Stage 0가 끝나고 출력 버전 확인을 기다리는 중간 상태(§4.1), `awaiting_approval`은 1단계가 막혔고 2단계도 요청된 job이 사람의 승인(`POST /jobs/{id}/proceed`, §7.4)을 기다리는 중간 상태 — 둘 다 의도적으로 터미널이 아니다. `stage1_needs_handoff`는 터미널이지만 `POST /jobs/{id}/resume-stage1`(§7.6)로 다시 `running`에 진입할 수 있다.
 - `JobEvent`: 진행 타임라인의 각 항목(`log`/`status`)을 `seq` 순서로 영속화 — DB에 남기 때문에 job 종료 후에도, 또는 클라이언트가 중간에 재연결해도 히스토리를 그대로 재생할 수 있다.
 - `streaming/sse.stream_job_events`는 **구독을 먼저 걸고 나서** 히스토리를 재생한다(순서를 반대로 하면 재생 쿼리와 구독 사이에 발행된 이벤트를 놓칠 수 있음). 재생된 `seq`는 집합에 담아두고, 이후 live 큐에서 같은 `seq`가 다시 오면 중복 전달을 걸러낸다.
 - `JobEventBus`는 프로세스 내 `asyncio.Queue` 기반 pub/sub일 뿐 영속성이 없다 — 영속성은 전적으로 `JobEvent` 테이블이 담당하고, 버스는 "지금 열려 있는 SSE 연결에 실시간으로 밀어주는" 역할만 한다.
@@ -350,6 +368,7 @@ flowchart LR
 | `GET /jobs/{id}` | job 상태 폴링 |
 | `POST /jobs/{id}/confirm-version` | `awaiting_version_approval` 상태인 job에 출력 버전을 확인하고 1/2단계 진행(§4.1). 그 상태가 아니면 409, 확인값이 현재 버전과 같아도 409 |
 | `POST /jobs/{id}/proceed` | `awaiting_approval` 상태인 job의 2단계를 재개(§7.4). 그 상태가 아니면 409 |
+| `POST /jobs/{id}/resume-stage1` | `stage1_needs_handoff` 상태인 job을, 사람이 `work/`를 직접 고친 뒤 검증하고 1단계를 이어서 진행(§7.6). 그 상태가 아니면 409 |
 | `POST /jobs/{id}/cancel` | 터미널이 아닌 job을 강제 중지. 살아있는 Task가 있으면 취소, `awaiting_*` 상태처럼 Task가 없으면 즉시 `cancelled`로 마감 |
 | `DELETE /jobs/{id}` | 터미널 상태인 job의 DB 행 + `{JOBS_DATA_DIR}/{job_id}/` 디렉터리를 삭제. 터미널이 아니면 409(먼저 취소 필요) |
 | `GET /jobs/{id}/events` | SSE 진행 스트림(재생 + 실시간) |
@@ -373,6 +392,7 @@ flowchart LR
 - **진행 상황 뷰**(`job-view.js`, `index.html`/`job.html` 공용): `log`/`status`/`inventory`/`vulnerabilities_baseline`/`vulnerabilities_post_stage1`/`vulnerabilities`/`vulnerabilities_final` 이벤트를 실시간 렌더링 — "분석" 카드(감지된 스택 + 취약점 테이블 최대 4개: 마이그레이션 전/후, 2단계 패치 대상, 최종 — §4.1, §7.5, §8.1, §8.3)가 진행 상황 카드 **아래**에 표시된다. "진행 상황" 제목 옆 "?" 아이콘으로 LangGraph 오케스트레이션(§7.2, §8.2) 다이어그램 모달을 볼 수 있다.
   - `status`가 `awaiting_version_approval`이면 감지된 현재/제안 버전을 보여주는 확인 패널이 뜬다(입력창에 제안값 프리필) — "확인하고 계속" 클릭 시 `POST /jobs/{id}/confirm-version` 호출, 동일 버전이면 백엔드가 409를 돌려주고 그 에러를 로그에 남긴 뒤 재시도 가능하게 둔다(§4.1).
   - `status`가 `awaiting_approval`이면 "2단계로 진행(승인)" 버튼이 나타나고(§7.4), 클릭 시 `POST /jobs/{id}/proceed` 호출 후 버튼만 숨김 — SSE는 재연결 없이 이어지는 이벤트를 그대로 받는다.
+  - `status`가 `stage1_needs_handoff`이면 "인수인계 후 재개" 버튼이 나타나고(§7.6), 클릭 시 `POST /jobs/{id}/resume-stage1` 호출 후 버튼을 숨긴다 — 이 상태는 터미널이라 SSE가 이미 닫혀 있으므로(§10), `proceed`와 달리 `connectSSE`를 다시 호출해 재연결한다.
   - 터미널이 아닌 상태에서는 "중지" 버튼이 떠 있고, 클릭(확인 다이얼로그 후) 시 `POST /jobs/{id}/cancel`을 호출한다.
   - 종료 상태 도달 시 연결을 닫고 `GET /jobs/{id}/artifacts` 조회.
 - **결과물 뷰어**: diff/report/handoff 각각 클릭 시 원문을 불러와 표시, 복사(클립보드)와 다운로드(Blob) 버튼 제공. diff가 있으면 "파일별로 보기" 링크로 `files.html?job={id}`로 이동할 수 있다.
