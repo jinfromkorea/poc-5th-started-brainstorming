@@ -151,6 +151,7 @@ async def test_stage1_only_success_writes_report_and_diff(monkeypatch, settings,
             "spring_boot_version": "4.1.0",
             "spring_cloud_version": None,
             "spring_ai_version": None,
+            "detected_parent": None,
         }
 
         baseline_vuln_events = [e for e in events if e.event_type == "vulnerabilities_baseline"]

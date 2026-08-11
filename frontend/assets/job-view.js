@@ -9,6 +9,8 @@ const stackJava = el("stack-java");
 const stackSpringBoot = el("stack-spring-boot");
 const stackSpringCloud = el("stack-spring-cloud");
 const stackSpringAi = el("stack-spring-ai");
+const detectedParentRow = el("detected-parent-row");
+const stackDetectedParent = el("stack-detected-parent");
 const vulnBaselineSection = el("vuln-baseline-section");
 const vulnBaselineTableBody = el("vuln-baseline-table-body");
 const vulnBaselineEmpty = el("vuln-baseline-empty");
@@ -225,6 +227,20 @@ function renderInventory(detected) {
   stackSpringBoot.textContent = detected.spring_boot_version || "감지 안됨";
   stackSpringCloud.textContent = detected.spring_cloud_version || "감지 안됨";
   stackSpringAi.textContent = detected.spring_ai_version || "감지 안됨";
+
+  // Above is what `mvn effective-pom`(부모 POM 상속까지 이미 반영된 최종
+  // 병합 결과)에서 뽑은 값 -- 사내 parent POM(BOM 겸용)을 쓰는 프로젝트라면
+  // 그 parent가 정의한 값이 이미 녹아 있다. 이 줄은 "그 값들이 실제로
+  // 사내 parent POM에서 왔다"는 사실 자체를 보여준다(spec: docs/
+  // superpowers/specs/2026-08-11-internal-parent-pom-target-version-
+  // design.md의 detect_external_parent 재사용).
+  if (detected.detected_parent) {
+    const p = detected.detected_parent;
+    detectedParentRow.classList.remove("hidden");
+    stackDetectedParent.textContent = `${p.group_id}:${p.artifact_id} (버전 ${p.version ?? "-"})`;
+  } else {
+    detectedParentRow.classList.add("hidden");
+  }
 }
 
 function renderVulnerabilitiesInto(vulnerabilities, { section, tableBody, emptyMsg, countBadge }) {

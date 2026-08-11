@@ -214,18 +214,21 @@ async def run_pipeline(
             work_dir, effective_pom_path, settings, log_path=build_log_path(output_dir, "ingest", "mvn-effective-pom")
         )
         detected = extract_versions(effective_pom_path)
-        await emit("inventory", asdict(detected))
-
-        current_version, _version_source = read_declared_version(effective_pom_path)
-        suggested_version = compute_stage0_output_version(current_version, run_stage1) if current_version else None
 
         # A <parent> on the ingested project's own root pom.xml that isn't a
         # known public one may be a "사내 parent POM(BOM 겸용)" whose
         # properties are the actual source of the detected stack above --
         # Stage 1 can't touch that artifact's own files, only point at a
         # newer released version of it (spec: docs/superpowers/specs/
-        # 2026-08-11-internal-parent-pom-target-version-design.md).
+        # 2026-08-11-internal-parent-pom-target-version-design.md). Computed
+        # here (before the inventory emit) so the "분석" panel can show it
+        # alongside the stack it actually explains, not just later in the
+        # version-approval gate.
         detected_parent = detect_external_parent(work_dir / "pom.xml")
+        await emit("inventory", {**asdict(detected), "detected_parent": asdict(detected_parent) if detected_parent else None})
+
+        current_version, _version_source = read_declared_version(effective_pom_path)
+        suggested_version = compute_stage0_output_version(current_version, run_stage1) if current_version else None
 
         await log("마이그레이션 전 취약점 스캔 시작")
         baseline_scan_started_at = time.monotonic()
