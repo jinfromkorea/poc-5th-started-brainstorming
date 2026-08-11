@@ -41,3 +41,23 @@ async def test_apply_output_version_syncs_self_referencing_bom_property(settings
     # versions:set alone leaves that stale (confirmed empirically, job #11).
     assert "<ace.version>1.0.0</ace.version>" in root_pom
     assert checkpoint_sha
+
+
+@pytest.mark.asyncio
+async def test_apply_output_version_on_project_with_externally_inherited_version(settings):
+    """Regression test for job #38: anne-agent's own pom.xml declares no
+    <version> at all -- it's parented on ace-parent (a separate, externally-
+    released artifact, not a sibling module in this reactor) and inherits
+    its version from there. `mvn versions:set` refuses outright ("Project
+    version is inherited from parent") unless the project first gets an
+    explicit <version> of its own to rewrite (confirmed empirically)."""
+    result = ingest(new_job_id(), ZipSourceSpec(zip_path=DATA_DIR / "anne-agent.zip"), settings)
+
+    checkpoint_sha = await apply_output_version(result.paths.work, "1.0.0", settings)
+
+    root_pom = (result.paths.work / "pom.xml").read_text(encoding="utf-8")
+    assert "<version>1.0.0</version>" in root_pom
+    # The <parent> reference itself must stay untouched -- ace-parent is a
+    # separate artifact, not something this job is meant to modify.
+    assert "<artifactId>ace-parent</artifactId>" in root_pom
+    assert checkpoint_sha

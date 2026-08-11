@@ -12,6 +12,7 @@ from app.config import Settings
 from app.mvnrewrite.subprocess_runner import SubprocessResult
 from app.versioning import artifact_version
 from app.versioning.artifact_version import (
+    _ensure_local_version_declared,
     _project_group_id,
     _self_referencing_version_properties,
     apply_output_version,
@@ -146,6 +147,62 @@ def test_compute_stage0_output_version_leaves_unparseable_version_unchanged():
 
 def test_compute_stage0_output_version_pads_before_bumping():
     assert compute_stage0_output_version("1.2", False) == "1.3.0"
+
+
+def test_ensure_local_version_declared_adds_version_when_inherited_from_parent(tmp_path):
+    """Regression test for job #38: anne-agent's own pom.xml has no
+    <version> -- only a <parent> pointing at ace-parent (a separately-
+    released artifact, not a sibling module). `mvn versions:set` refuses to
+    touch such a project ("Project version is inherited from parent",
+    confirmed empirically) unless it first gets an explicit local <version>
+    to rewrite."""
+    pom = tmp_path / "pom.xml"
+    pom.write_text(f"""<project xmlns="{_NS}">
+        <modelVersion>4.0.0</modelVersion>
+        <parent>
+            <groupId>com.poscodx.ai.ace</groupId>
+            <artifactId>ace-parent</artifactId>
+            <version>0.4.5</version>
+        </parent>
+        <artifactId>anne-agent</artifactId>
+        <packaging>pom</packaging>
+    </project>""")
+
+    _ensure_local_version_declared(pom)
+
+    text = pom.read_text(encoding="utf-8")
+    assert "<version>0.4.5</version>" in text
+    # the <parent> reference itself must stay untouched
+    assert "<artifactId>ace-parent</artifactId>" in text
+
+
+def test_ensure_local_version_declared_is_a_noop_when_already_declared(tmp_path):
+    pom = tmp_path / "pom.xml"
+    xml = f"""<project xmlns="{_NS}">
+        <modelVersion>4.0.0</modelVersion>
+        <parent>
+            <groupId>com.example</groupId>
+            <artifactId>demo-parent</artifactId>
+            <version>1.0.0</version>
+        </parent>
+        <artifactId>demo-module</artifactId>
+        <version>2.0.0</version>
+    </project>"""
+    pom.write_text(xml)
+
+    _ensure_local_version_declared(pom)
+
+    assert pom.read_text(encoding="utf-8") == xml
+
+
+def test_ensure_local_version_declared_is_a_noop_when_no_version_anywhere(tmp_path):
+    pom = tmp_path / "pom.xml"
+    xml = f'<project xmlns="{_NS}"><modelVersion>4.0.0</modelVersion><artifactId>demo</artifactId></project>'
+    pom.write_text(xml)
+
+    _ensure_local_version_declared(pom)
+
+    assert pom.read_text(encoding="utf-8") == xml
 
 
 def _work_dir_with_pom(tmp_path, settings, pom_xml: str):

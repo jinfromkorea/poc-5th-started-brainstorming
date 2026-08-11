@@ -15,10 +15,38 @@ from lxml import etree
 
 from app.checkpoint.git_repo import commit_checkpoint
 from app.config import Settings
+from app.ingest.maven_detect import read_declared_version
 from app.mvnrewrite.mvn_client import mvn_versions_set, mvn_versions_set_property
 from app.mvnrewrite.subprocess_runner import build_log_path
 
 _PROP_REF_RE = re.compile(r"^\$\{([^}]+)\}$")
+
+
+def _ensure_local_version_declared(pom_path: Path) -> None:
+    """`mvn versions:set` refuses outright ("Project version is inherited
+    from parent") when a project's own pom.xml has no <version> of its own
+    and only inherits one from a <parent> -- confirmed empirically (job #38,
+    a project parented on an external, non-reactor-local "사내 parent POM
+    (BOM 겸용)" like ace-parent) and reproduced/fixed by hand against the
+    same real project. There's no plugin flag that overrides this; the fix
+    is to give the project an explicit <version> equal to its current
+    (inherited) value first -- that's something versions:set CAN rewrite --
+    which also correctly leaves <parent><version> untouched, since that
+    parent is a separately-released artifact, not part of this reactor."""
+    current_version, source = read_declared_version(pom_path)
+    if source != "parent.version":
+        return  # already declares its own <version>, has none at all, or unparseable -- nothing to fix
+
+    tree = etree.parse(str(pom_path))
+    root = tree.getroot()
+    parent_el = root.find("{*}parent")
+    ns = etree.QName(root.tag).namespace
+    version_el = etree.Element(f"{{{ns}}}version" if ns else "version")
+    version_el.text = current_version
+    version_el.tail = parent_el.tail
+    parent_el.tail = "\n\n    "
+    parent_el.addnext(version_el)
+    tree.write(str(pom_path), xml_declaration=True, encoding="UTF-8")
 
 
 def _project_group_id(root: etree._Element) -> str | None:
@@ -67,6 +95,7 @@ def _self_referencing_version_properties(pom_path: Path) -> set[str]:
 async def apply_output_version(
     work_dir: Path, new_version: str, settings: Settings, output_dir: Path | None = None
 ) -> str:
+    _ensure_local_version_declared(work_dir / "pom.xml")
     log_path = build_log_path(output_dir, "ingest", "mvn-versions-set") if output_dir is not None else None
     result = await mvn_versions_set(work_dir, new_version, settings, log_path=log_path)
     if result.returncode != 0:
