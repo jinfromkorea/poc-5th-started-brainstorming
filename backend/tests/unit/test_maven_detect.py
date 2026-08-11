@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from app.ingest.errors import GradleProjectError, NotMavenProjectError
-from app.ingest.maven_detect import detect_maven_project, read_declared_version
+from app.ingest.maven_detect import ExternalParentInfo, detect_external_parent, detect_maven_project, read_declared_version
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 
@@ -145,3 +145,45 @@ def test_read_declared_version_from_multi_module_effective_pom_projects_wrapper(
     </projects>""")
 
     assert read_declared_version(pom_path) == ("0.4.5", "version")
+
+
+def test_detect_external_parent_returns_none_for_public_allowlisted_parent(tmp_path):
+    pom_path = tmp_path / "pom.xml"
+    pom_path.write_text(f"""<project xmlns="{_POM_NS}">
+        <modelVersion>4.0.0</modelVersion>
+        <parent>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-parent</artifactId>
+            <version>2.7.18</version>
+        </parent>
+        <artifactId>demo</artifactId>
+    </project>""")
+
+    assert detect_external_parent(pom_path) is None
+
+
+def test_detect_external_parent_returns_info_for_internal_parent(tmp_path):
+    """Regression test for job #35/#38: anne-agent's root pom.xml inherits
+    everything from ace-parent, a separately-released internal artifact."""
+    pom_path = tmp_path / "pom.xml"
+    pom_path.write_text(f"""<project xmlns="{_POM_NS}">
+        <modelVersion>4.0.0</modelVersion>
+        <parent>
+            <groupId>com.poscodx.ai.ace</groupId>
+            <artifactId>ace-parent</artifactId>
+            <version>0.4.5</version>
+        </parent>
+        <artifactId>anne-agent</artifactId>
+        <packaging>pom</packaging>
+    </project>""")
+
+    assert detect_external_parent(pom_path) == ExternalParentInfo(
+        group_id="com.poscodx.ai.ace", artifact_id="ace-parent", version="0.4.5"
+    )
+
+
+def test_detect_external_parent_returns_none_when_no_parent(tmp_path):
+    pom_path = tmp_path / "pom.xml"
+    pom_path.write_text(f'<project xmlns="{_POM_NS}"><modelVersion>4.0.0</modelVersion><artifactId>demo</artifactId></project>')
+
+    assert detect_external_parent(pom_path) is None

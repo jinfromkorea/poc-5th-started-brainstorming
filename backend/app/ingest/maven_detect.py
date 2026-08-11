@@ -112,3 +112,47 @@ def read_declared_version(root_pom: Path) -> tuple[str | None, str]:
         if parent_version:
             return parent_version, "parent.version"
     return None, "none"
+
+
+# Deliberately small and conservative -- "unknown parent" defaults to
+# "possibly internal", not the other way around (spec: docs/superpowers/
+# specs/2026-08-11-internal-parent-pom-target-version-design.md). Extend as
+# other legitimate public parents come up.
+_PUBLIC_PARENT_ALLOWLIST = {
+    ("org.springframework.boot", "spring-boot-starter-parent"),
+}
+
+
+@dataclass
+class ExternalParentInfo:
+    group_id: str
+    artifact_id: str
+    version: str | None  # <parent>에 <version> 텍스트가 비어 있는(malformed pom.xml) 방어적 케이스만 None
+
+
+def detect_external_parent(root_pom: Path) -> ExternalParentInfo | None:
+    """Stage 0 calls this right after mvn_effective_pom/extract_versions,
+    against the project's own *raw* (non-effective) root pom.xml. A <parent>
+    on the ingested reactor's own root is, by definition, an artifact
+    outside this job's ingested source (git/zip) -- it's released and
+    resolved separately, unlike a multi-module child's <parent> pointing at
+    its own reactor root, which stays inside the ingested tree via
+    <modules> and is already handled fine. If that <parent> isn't a known
+    public one, treat it as "possibly an internal parent POM (BOM 겸용)"
+    whose properties may be the actual source of this project's detected
+    stack versions -- Stage 1 can't touch that artifact's own files, only
+    point at a newer released version of it (spec: docs/superpowers/specs/
+    2026-08-11-internal-parent-pom-target-version-design.md). Confirmed
+    against a real case: anne-agent inherits java/spring-boot/spring-ai
+    entirely from ace-parent (job #35/#38)."""
+    root = _parse_pom(root_pom)
+    parent_el = root.find("{*}parent")
+    if parent_el is None:
+        return None
+    group_id = _text(parent_el, "groupId")
+    artifact_id = _text(parent_el, "artifactId")
+    if group_id is None or artifact_id is None:
+        return None
+    if (group_id, artifact_id) in _PUBLIC_PARENT_ALLOWLIST:
+        return None
+    return ExternalParentInfo(group_id=group_id, artifact_id=artifact_id, version=_text(parent_el, "version"))

@@ -107,7 +107,7 @@ async def test_stage1_only_success_writes_report_and_diff(monkeypatch, settings,
 
     monkeypatch.setattr("app.orchestration.pipeline.run_combined_scan", fake_baseline_scan)
 
-    async def fake_stage1(job_id, work_dir, detected, baseline, settings_, on_log=None):
+    async def fake_stage1(job_id, work_dir, detected, baseline, settings_, parent_target_version=None, on_log=None):
         return MigrationRunResult(
             plan=MigrationPlan(steps=[]),
             outcomes=[],
@@ -229,7 +229,7 @@ async def test_stage1_needs_handoff_writes_guide_file(monkeypatch, settings, db,
 
     monkeypatch.setattr("app.orchestration.pipeline.run_combined_scan", fake_baseline_scan)
 
-    async def fake_stage1(job_id, work_dir, detected, baseline, settings_, on_log=None):
+    async def fake_stage1(job_id, work_dir, detected, baseline, settings_, parent_target_version=None, on_log=None):
         return MigrationRunResult(
             plan=MigrationPlan(steps=[]),
             outcomes=[],
@@ -375,7 +375,7 @@ async def test_stage1_needs_handoff_with_stage2_requested_pauses_for_approval(mo
 
     monkeypatch.setattr("app.orchestration.pipeline.run_combined_scan", fake_baseline_scan)
 
-    async def fake_stage1(job_id, work_dir, detected, baseline, settings_, on_log=None):
+    async def fake_stage1(job_id, work_dir, detected, baseline, settings_, parent_target_version=None, on_log=None):
         return MigrationRunResult(
             plan=MigrationPlan(steps=[]),
             outcomes=[],
@@ -519,7 +519,7 @@ async def test_stage1_success_commits_survive_a_failed_first_stage2_cve(monkeypa
 
     monkeypatch.setattr("app.orchestration.pipeline.run_combined_scan", fake_scan)
 
-    async def fake_stage1(job_id, work_dir, detected, baseline, settings_, on_log=None):
+    async def fake_stage1(job_id, work_dir, detected, baseline, settings_, parent_target_version=None, on_log=None):
         # Mirrors what multi_step.run_stage1_migration really does for each
         # successful step: a real checkpoint commit per step.
         commit_checkpoint(work_dir, settings_, "checkpoint: Spring Boot 3.5 -> 4.0")

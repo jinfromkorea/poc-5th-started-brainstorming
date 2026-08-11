@@ -10,6 +10,8 @@ from typing import Annotated, Literal, TypedDict
 
 from langgraph.graph.message import add_messages
 
+from app.orchestration.planning import StepKind
+
 Stage1Status = Literal["running", "success", "failed", "needs_handoff"]
 
 
@@ -19,13 +21,19 @@ class Stage1State(TypedDict):
 
     # What this single step is meant to accomplish.
     detected_spring_boot: str | None  # e.g. "3.5.16", from pom_parser.DetectedVersions
-    target_spring_boot: str  # e.g. "4.1"
+    target_spring_boot: str  # e.g. "4.1" -- also reused as the generic "this step's target_version" slot
     recipe: str | None  # fully-qualified OpenRewrite recipe class, or None
     artifact: str | None  # recipe's Maven artifact coordinates, or None
     # True when recipe/artifact were already decided by an outer multi-step
     # planner (planning.build_migration_plan) -- plan_node then skips its own
     # single-step planning logic entirely, whether or not recipe is None.
     plan_precomputed: bool
+    # "parent_pom" routes apply_node/ai_fix_node down a different path (a
+    # mechanical <parent><version> edit instead of an OpenRewrite recipe --
+    # spec: docs/superpowers/specs/2026-08-11-internal-parent-pom-target-
+    # version-design.md) even though recipe is None for it, same as a
+    # genuine catalog gap.
+    step_kind: StepKind
 
     # Retry bookkeeping (spec: COMPILE_FIX_MAX_ATTEMPTS / _AUTO_APPLY_MAX_FILES).
     attempt: int

@@ -24,6 +24,7 @@ from langgraph.graph import END, START, StateGraph
 from app.checkpoint.git_repo import changed_file_count, commit_checkpoint
 from app.config import Settings
 from app.mvnrewrite.mvn_client import mvn_test_compile
+from app.mvnrewrite.parent_patch import patch_parent_version
 from app.mvnrewrite.recipe_catalog import RecipeCatalog, RecipeStep
 from app.mvnrewrite.rewrite_client import run_openrewrite_recipes
 from app.mvnrewrite.subprocess_runner import build_log_path
@@ -97,11 +98,31 @@ def build_stage1_graph(settings: Settings, on_log: LogFn = noop_log):
     def route_after_plan(state: Stage1State) -> str:
         if state.get("status") == "success":
             return END
+        if state.get("step_kind") == "parent_pom":
+            # No catalog recipe either, but this isn't a "no known recipe"
+            # gap -- there's a mechanical action (apply_node's parent_pom
+            # branch) to try before falling back to ai_fix.
+            return "apply"
         return "ai_fix" if state.get("recipe") is None else "apply"
 
     async def apply_node(state: Stage1State) -> dict:
         work_dir = Path(state["work_dir"])
         output_dir = work_dir.parent / "output"  # sibling of work/ -- see ingest/workspace.py's WorkspacePaths
+
+        if state.get("step_kind") == "parent_pom":
+            target = state["target_spring_boot"]  # generic "this step's target_version" slot, same as java/spring_ai steps
+            started_at = time.monotonic()
+            try:
+                patch_parent_version(work_dir / "pom.xml", target)
+                returncode, output = 0, f"parent <version> set to {target}"
+            except Exception as exc:  # noqa: BLE001 -- surfaced via last_build_output, same as a failed subprocess
+                returncode, output = 1, str(exc)
+            elapsed = time.monotonic() - started_at
+            commit_checkpoint(work_dir, settings, f"checkpoint: 사내 parent POM 버전을 {target}로 교체")
+            outcome = "완료" if returncode == 0 else "실패"
+            await on_log(f"  parent POM 버전 교체 {outcome} ({elapsed:.1f}s)")
+            return {"apply_returncode": returncode, "last_build_output": f"[parent-patch exit={returncode}]\n{output}"}
+
         recipe_label = (state["recipe"] or "recipe").rsplit(".", 1)[-1]
         log_path = build_log_path(output_dir, "stage1", f"openrewrite-{recipe_label}")
         started_at = time.monotonic()
@@ -156,7 +177,17 @@ def build_stage1_graph(settings: Settings, on_log: LogFn = noop_log):
         tools = build_tools(work_dir, settings, output_dir, stage="stage1")
         agent = create_agent(model, tools, system_prompt=_AI_FIX_SYSTEM_PROMPT)
 
-        if state["recipe"] is None and state["attempt"] == 0:
+        if state.get("step_kind") == "parent_pom":
+            # Unlike the "no recipe" branch below, apply_node already ran
+            # (it mechanically set <parent><version>) before verify failed --
+            # so this is a real build failure to react to, not a from-scratch
+            # request. Checked before the generic "recipe is None" branches,
+            # since a parent_pom step also has recipe=None.
+            instruction = (
+                f"Updating this project's <parent><version> to {state['target_spring_boot']} is not compiling. "
+                f"Build output (may be truncated):\n{state['last_build_output'][-6000:]}"
+            )
+        elif state["recipe"] is None and state["attempt"] == 0:
             # No cataloged recipe for this step -- nothing has been applied
             # yet, so there's no build failure to react to. Ask the AI to
             # perform the version bump itself; verify_node checks the result.
@@ -227,6 +258,7 @@ def initial_state(
         recipe=None,
         artifact=None,
         plan_precomputed=False,
+        step_kind="spring_boot",  # this constructor is only ever used for plan_node's own self-computed Boot lookup
         attempt=0,
         max_attempts=settings.compile_fix_max_attempts,
         max_auto_apply_files=settings.compile_fix_auto_apply_max_files,
@@ -262,6 +294,7 @@ def initial_state_for_step(job_id: str, work_dir: Path, step: PlanStep, settings
         recipe=step.recipe,
         artifact=step.artifact,
         plan_precomputed=True,
+        step_kind=step.kind,
         attempt=0,
         max_attempts=settings.compile_fix_max_attempts,
         max_auto_apply_files=(

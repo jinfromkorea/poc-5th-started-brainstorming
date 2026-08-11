@@ -66,6 +66,14 @@ python -m http.server 5500
 - [ ] 1·2단계 둘 다 선택하지 않고 제출 → 버전 확인 단계 없이(`awaiting_version_approval`을 거치지 않고) 바로 `success`로 끝나는지
 - [ ] `awaiting_version_approval` 상태에서 "중지" 버튼 클릭 → 확인 다이얼로그 후 정상적으로 `cancelled`로 끝나는지
 
+### 사내 parent POM(BOM 겸용) 목표 버전
+
+- [ ] 사내 parent(공개 `spring-boot-starter-parent` 등이 아닌 `<parent>`)가 있는 프로젝트 제출 → 버전 확인 패널에 "사내 parent POM 목표 버전" 입력창이 추가로 뜨고, 감지된 parent 좌표/현재 버전이 안내 문구에 표시되는지
+- [ ] 공개 parent를 쓰거나 `<parent>`가 없는 프로젝트 제출 → 그 입력창 자체가 안 뜨는지(회귀 확인)
+- [ ] 입력창을 비운 채 확인 → 1단계가 기존처럼 진행되고(스택 프로퍼티가 parent 상속이라 대부분 변경 없음), 결과물 리포트에 "이 프로젝트만으로는 목표에 도달할 수 없습니다" 안내 문구가 남는지
+- [ ] 입력창을 감지된 현재 parent 버전과 같은 값으로 두고 확인 → 409, 계속 `awaiting_version_approval`로 대기하는지
+- [ ] (사전에 목표 스택을 반영한 새 parent 버전을 준비해두고) 다른 값을 입력해 확인 → 진행 로그에 "사내 parent POM 버전을 ...로 교체" 스텝이 맨 먼저 실행되고, 완료 후 "재분석" 로그가 남고, 이어지는 계획이 재분석된 스택 기준으로 세워지는지
+
 ### 진행 상황 & 분석 패널 (`index.html` / `job.html` 공유)
 
 - [ ] 1단계 실행 시 "분석" 카드가 진행 상황 아래에 표시되고, 감지된 스택(Java/Spring Boot/Cloud/AI)과 마이그레이션 전 취약점 테이블이 채워지는지

@@ -16,7 +16,7 @@ from sse_starlette.sse import EventSourceResponse
 from app.api.deps import require_api_token
 from app.checkpoint.git_repo import rmtree_clear_readonly
 from app.config import Settings, get_settings
-from app.ingest.maven_detect import read_declared_version
+from app.ingest.maven_detect import detect_external_parent, read_declared_version
 from app.ingest.workspace import GitSourceSpec, ZipSourceSpec
 from app.models.db import get_db_session, session_factory
 from app.models.job import TERMINAL_JOB_STATUSES, Job, JobEvent, next_job_id
@@ -156,10 +156,21 @@ async def confirm_version(
             detail=f"output version must differ from the current version ({current_version})",
         )
 
+    if body.parent_target_version:
+        detected_parent = detect_external_parent(settings.jobs_dir / job_id / "work" / "pom.xml")
+        if detected_parent is not None and body.parent_target_version == detected_parent.version:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"parent target version must differ from the current parent version ({detected_parent.version})",
+            )
+
     factory = session_factory(settings)
     manager = get_job_manager(settings.max_concurrent_repos)
     manager.start(
-        job_id, lambda: run_pipeline_resume_after_version_confirm(job_id, body.output_version, settings, factory)
+        job_id,
+        lambda: run_pipeline_resume_after_version_confirm(
+            job_id, body.output_version, settings, factory, parent_target_version=body.parent_target_version
+        ),
     )
 
     return JobCreateResponse(job_id=job_id, status="running")

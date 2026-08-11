@@ -27,6 +27,17 @@ _POM = b"""<project xmlns="http://maven.apache.org/POM/4.0.0">
     <packaging>jar</packaging>
 </project>"""
 
+_POM_WITH_INTERNAL_PARENT = b"""<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.example.internal</groupId>
+        <artifactId>internal-parent</artifactId>
+        <version>1.0.0</version>
+    </parent>
+    <artifactId>demo</artifactId>
+    <packaging>jar</packaging>
+</project>"""
+
 
 def _zip_bytes(entries: dict[str, bytes]) -> bytes:
     buf = io.BytesIO()
@@ -372,7 +383,7 @@ def test_cancel_awaiting_approval_job_finalizes_immediately(app_client, monkeypa
         output_path.write_text("<projects><project/></projects>", encoding="utf-8")
         return output_path
 
-    async def stage1_needs_handoff(job_id, work_dir, detected, baseline, settings_, on_log=None):
+    async def stage1_needs_handoff(job_id, work_dir, detected, baseline, settings_, parent_target_version=None, on_log=None):
         return MigrationRunResult(
             plan=MigrationPlan(steps=[]),
             outcomes=[],
@@ -520,6 +531,128 @@ def test_confirm_version_with_different_value_proceeds_and_persists_output_versi
     assert final["output_version"] == "2.0.0"
 
 
+def test_job_reaches_awaiting_version_approval_with_detected_parent(tmp_path, monkeypatch):
+    """Regression coverage for job #35/#38: a project whose root pom.xml has
+    a <parent> outside the known-public allowlist (e.g. ace-parent) should
+    surface that in the awaiting_version_approval status event, so the
+    frontend can offer the optional "사내 parent POM 목표 버전" field. A
+    project with no <parent> at all must not (existing `_POM` fixture)."""
+    from app.models.db import session_factory as make_session_factory
+    from app.models.job import JobEvent
+
+    reset_job_manager()
+    test_settings = Settings(
+        _env_file=None,
+        jobs_data_dir=str(tmp_path / "jobs"),
+        database_url=f"sqlite:///{(tmp_path / 'test.db').as_posix()}",
+    )
+    init_db(test_settings)
+    app = create_app()
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    client = TestClient(app)
+
+    monkeypatch.setattr("app.orchestration.pipeline.mvn_effective_pom", _fast_mvn_effective_pom)
+    monkeypatch.setattr("app.orchestration.pipeline.run_combined_scan", _no_vulns_scan)
+
+    factory = make_session_factory(test_settings)
+
+    def _latest_status_data(job_id: str) -> dict:
+        with factory() as session:
+            row = (
+                session.query(JobEvent)
+                .filter(JobEvent.job_id == job_id, JobEvent.event_type == "status")
+                .order_by(JobEvent.seq.desc())
+                .first()
+            )
+            return row.data
+
+    zip_with_parent = _zip_bytes({"pom.xml": _POM_WITH_INTERNAL_PARENT})
+    create_resp = client.post(
+        "/jobs",
+        data={"run_stage1": "true", "run_stage2": "false"},
+        files={"zip_file": ("project.zip", zip_with_parent, "application/zip")},
+    )
+    job_id = create_resp.json()["job_id"]
+    _wait_for_status(client, job_id, "awaiting_version_approval")
+    assert _latest_status_data(job_id)["detected_parent"] == {
+        "group_id": "com.example.internal",
+        "artifact_id": "internal-parent",
+        "version": "1.0.0",
+    }
+
+    zip_without_parent = _zip_bytes({"pom.xml": _POM})
+    create_resp2 = client.post(
+        "/jobs",
+        data={"run_stage1": "true", "run_stage2": "false"},
+        files={"zip_file": ("project.zip", zip_without_parent, "application/zip")},
+    )
+    job_id2 = create_resp2.json()["job_id"]
+    _wait_for_status(client, job_id2, "awaiting_version_approval")
+    assert _latest_status_data(job_id2)["detected_parent"] is None
+
+    reset_job_manager()
+
+
+def test_confirm_version_with_same_parent_target_version_returns_409(app_client, monkeypatch):
+    monkeypatch.setattr("app.orchestration.pipeline.mvn_effective_pom", _fast_mvn_effective_pom)
+    monkeypatch.setattr("app.orchestration.pipeline.run_combined_scan", _no_vulns_scan)
+
+    zip_content = _zip_bytes({"pom.xml": _POM_WITH_INTERNAL_PARENT})
+    create_resp = app_client.post(
+        "/jobs",
+        data={"run_stage1": "true", "run_stage2": "false"},
+        files={"zip_file": ("project.zip", zip_content, "application/zip")},
+    )
+    job_id = create_resp.json()["job_id"]
+    _wait_for_status(app_client, job_id, "awaiting_version_approval")
+
+    resp = app_client.post(
+        f"/jobs/{job_id}/confirm-version",
+        json={"output_version": "2.0.0", "parent_target_version": "1.0.0"},  # same as detected parent version
+    )
+    assert resp.status_code == 409
+    assert app_client.get(f"/jobs/{job_id}").json()["status"] == "awaiting_version_approval"
+
+
+def test_confirm_version_with_parent_target_version_reaches_stage1(app_client, monkeypatch):
+    monkeypatch.setattr("app.orchestration.pipeline.mvn_effective_pom", _fast_mvn_effective_pom)
+    monkeypatch.setattr("app.orchestration.pipeline.run_combined_scan", _no_vulns_scan)
+    monkeypatch.setattr("app.orchestration.pipeline.apply_output_version", _fast_apply_output_version)
+
+    captured = {}
+
+    async def fake_stage1_migration(
+        job_id, work_dir, detected, baseline, settings_, parent_target_version=None, on_log=None
+    ):
+        captured["parent_target_version"] = parent_target_version
+        from app.orchestration.multi_step import MigrationRunResult
+        from app.orchestration.planning import MigrationPlan
+
+        return MigrationRunResult(
+            plan=MigrationPlan(steps=[]), outcomes=[], status="no_gap", final_diff="", report="# stage1 report", handoff_guide=None
+        )
+
+    monkeypatch.setattr("app.orchestration.pipeline.run_stage1_migration", fake_stage1_migration)
+
+    zip_content = _zip_bytes({"pom.xml": _POM_WITH_INTERNAL_PARENT})
+    create_resp = app_client.post(
+        "/jobs",
+        data={"run_stage1": "true", "run_stage2": "false"},
+        files={"zip_file": ("project.zip", zip_content, "application/zip")},
+    )
+    job_id = create_resp.json()["job_id"]
+    _wait_for_status(app_client, job_id, "awaiting_version_approval")
+
+    resp = app_client.post(
+        f"/jobs/{job_id}/confirm-version",
+        json={"output_version": "2.0.0", "parent_target_version": "1.1.0"},
+    )
+    assert resp.status_code == 200
+
+    _wait_for_terminal_status(app_client, job_id)
+    assert captured["parent_target_version"] == "1.1.0"
+
+
 def test_cancel_awaiting_version_approval_finalizes_immediately(app_client, monkeypatch):
     monkeypatch.setattr("app.orchestration.pipeline.mvn_effective_pom", _fast_mvn_effective_pom)
     monkeypatch.setattr("app.orchestration.pipeline.run_combined_scan", _no_vulns_scan)
@@ -579,7 +712,7 @@ def test_stage1_and_stage2_job_scans_exactly_three_times(app_client, monkeypatch
         call_count["n"] += 1
         return []
 
-    async def stage1_no_gap(job_id, work_dir, detected, baseline, settings_, on_log=None):
+    async def stage1_no_gap(job_id, work_dir, detected, baseline, settings_, parent_target_version=None, on_log=None):
         return MigrationRunResult(
             plan=MigrationPlan(steps=[]),
             outcomes=[],

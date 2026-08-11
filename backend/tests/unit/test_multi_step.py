@@ -209,3 +209,78 @@ async def test_already_at_target_produces_no_gap_status(settings, work_dir):
     assert result.status == "no_gap"
     assert result.outcomes == []
     assert result.handoff_guide is None
+
+
+async def test_parent_target_version_succeeds_then_replans_from_reanalyzed_stack(monkeypatch, settings, work_dir):
+    """Regression coverage for the spec's re-planning requirement: once the
+    parent_pom step succeeds, the rest of the plan must be built from a
+    fresh mvn effective-pom/extract_versions call, not Stage 0's stale
+    pre-parent-bump `detected` -- here the reanalyzed stack is already at
+    target, so no further steps should run."""
+    effective_pom_calls = []
+
+    async def fake_mvn_effective_pom(work_dir_, output_path, settings_, log_path=None, on_line=None):
+        effective_pom_calls.append(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("<project/>", encoding="utf-8")
+        return output_path
+
+    monkeypatch.setattr("app.orchestration.graph_stage1.patch_parent_version", lambda pom_path, new_version: None)
+    monkeypatch.setattr("app.orchestration.graph_stage1.mvn_test_compile", AsyncMock(return_value=SubprocessResult(returncode=0, output="ok", log_path=None)))
+    monkeypatch.setattr("app.orchestration.multi_step.mvn_effective_pom", fake_mvn_effective_pom)
+    monkeypatch.setattr("app.orchestration.multi_step.extract_versions", lambda pom_path: _detected(spring_boot="4.1.0", java="21"))
+
+    baseline_sha = current_head(work_dir, settings)
+
+    result = await run_stage1_migration(
+        job_id="job-multi-parent-1",
+        work_dir=work_dir,
+        detected=_detected(spring_boot="2.7.18"),  # stale pre-bump value -- must NOT drive the rest of the plan
+        baseline_commit=baseline_sha,
+        settings=settings,
+        parent_target_version="0.5.0",
+    )
+
+    assert result.status == "success"
+    assert len(effective_pom_calls) == 1  # re-analyzed exactly once, right after the parent step
+    assert [o.status for o in result.outcomes] == ["success"]  # only the parent step -- reanalyzed stack was already at target
+    assert result.plan.steps[0].kind == "parent_pom"
+    assert result.plan.steps[0].target_version == "0.5.0"
+    assert len(result.plan.steps) == 1
+
+
+async def test_parent_target_version_failure_skips_reanalysis_and_rest_of_plan(monkeypatch, settings, work_dir):
+    effective_pom_calls = []
+
+    async def fake_mvn_effective_pom(work_dir_, output_path, settings_, log_path=None, on_line=None):
+        effective_pom_calls.append(output_path)
+        return output_path
+
+    def failing_patch(pom_path, new_version):
+        raise ValueError("no <parent> element to update")
+
+    monkeypatch.setattr("app.orchestration.graph_stage1.patch_parent_version", failing_patch)
+    monkeypatch.setattr(
+        "app.orchestration.graph_stage1.mvn_test_compile",
+        AsyncMock(return_value=SubprocessResult(returncode=1, output="never built", log_path=None)),
+    )
+    monkeypatch.setattr("app.orchestration.graph_stage1.changed_file_count", lambda work_dir_, settings_: 1)
+    monkeypatch.setattr("app.orchestration.graph_stage1.create_agent", lambda *a, **k: _fake_agent())
+    monkeypatch.setattr("app.orchestration.multi_step.mvn_effective_pom", fake_mvn_effective_pom)
+
+    baseline_sha = current_head(work_dir, settings)
+
+    result = await run_stage1_migration(
+        job_id="job-multi-parent-2",
+        work_dir=work_dir,
+        detected=_detected(spring_boot="2.7.18"),
+        baseline_commit=baseline_sha,
+        settings=settings,
+        parent_target_version="0.5.0",
+    )
+
+    assert result.status == "needs_handoff"
+    assert effective_pom_calls == []  # never reanalyzed -- the parent step itself never succeeded
+    assert len(result.plan.steps) == 1  # rest of the plan was never even built
+    assert result.plan.steps[0].kind == "parent_pom"
+    assert result.handoff_guide is not None

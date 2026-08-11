@@ -29,7 +29,7 @@ from typing import Literal
 from app.mvnrewrite.pom_parser import DetectedVersions
 from app.mvnrewrite.recipe_catalog import RecipeCatalog, RecipeStep
 
-StepKind = Literal["java", "spring_boot", "spring_ai"]
+StepKind = Literal["parent_pom", "java", "spring_boot", "spring_ai"]
 
 
 @dataclass

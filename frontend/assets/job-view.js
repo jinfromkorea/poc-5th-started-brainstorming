@@ -37,6 +37,9 @@ const detectedCurrentVersionEl = el("detected-current-version");
 const suggestedOutputVersionEl = el("suggested-output-version");
 const confirmVersionInput = el("confirm-version-input");
 const confirmVersionBtn = el("confirm-version-btn");
+const parentVersionField = el("parent-version-field");
+const parentTargetVersionInput = el("parent-target-version-input");
+const parentVersionHint = el("parent-version-hint");
 const artifactsPanel = el("artifacts-panel");
 const viewDiffBtn = el("view-diff-btn");
 const viewReportBtn = el("view-report-btn");
@@ -302,16 +305,32 @@ function renderVulnerabilitiesFinal(vulnerabilities) {
   });
 }
 
-function showVersionApprovalPanel(currentVersion, suggestedVersion) {
+function showVersionApprovalPanel(currentVersion, suggestedVersion, detectedParent) {
   versionApprovalPanel.classList.remove("hidden");
   detectedCurrentVersionEl.textContent = currentVersion ?? "-";
   suggestedOutputVersionEl.textContent = suggestedVersion ?? "-";
   confirmVersionInput.value = suggestedVersion ?? "";
   confirmVersionBtn.disabled = false;
+
+  if (detectedParent) {
+    parentVersionField.classList.remove("hidden");
+    parentVersionHint.classList.remove("hidden");
+    parentVersionHint.textContent =
+      `이 프로젝트는 사내 parent POM(${detectedParent.group_id}:${detectedParent.artifact_id}, ` +
+      `현재 ${detectedParent.version ?? "-"})에서 스택 버전을 상속받습니다. 이미 목표 스택으로 올라간 ` +
+      `새 버전이 있다면 입력하세요 (선택).`;
+  } else {
+    parentVersionField.classList.add("hidden");
+    parentVersionHint.classList.add("hidden");
+    parentTargetVersionInput.value = "";
+  }
 }
 
 function hideVersionApprovalPanel() {
   versionApprovalPanel.classList.add("hidden");
+  parentVersionField.classList.add("hidden");
+  parentVersionHint.classList.add("hidden");
+  parentTargetVersionInput.value = "";
 }
 
 confirmVersionBtn.addEventListener("click", async () => {
@@ -321,7 +340,10 @@ confirmVersionBtn.addEventListener("click", async () => {
     const res = await fetch(apiUrl(`/jobs/${jobId}/confirm-version`), {
       method: "POST",
       headers: { ...authHeaders(), "Content-Type": "application/json" },
-      body: JSON.stringify({ output_version: confirmVersionInput.value.trim() }),
+      body: JSON.stringify({
+        output_version: confirmVersionInput.value.trim(),
+        parent_target_version: parentTargetVersionInput.value.trim() || null,
+      }),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -424,7 +446,7 @@ function connectSSE(jobId) {
       appendLog(`오류: ${data.error}`, true);
     }
     if (data.status === "awaiting_version_approval") {
-      showVersionApprovalPanel(data.current_version, data.suggested_version);
+      showVersionApprovalPanel(data.current_version, data.suggested_version, data.detected_parent);
     } else {
       hideVersionApprovalPanel();
     }

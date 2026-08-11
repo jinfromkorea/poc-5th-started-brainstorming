@@ -12,6 +12,7 @@ class JobCreateResponse(BaseModel):
 
 class ConfirmVersionRequest(BaseModel):
     output_version: str
+    parent_target_version: str | None = None
 
 
 class JobStatusResponse(BaseModel):

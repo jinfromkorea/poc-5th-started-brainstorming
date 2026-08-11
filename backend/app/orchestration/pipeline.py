@@ -34,7 +34,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.checkpoint.git_repo import current_head, diff_since, resolve_ingest_baseline
 from app.config import Settings
 from app.ingest.errors import IngestError
-from app.ingest.maven_detect import read_declared_version
+from app.ingest.maven_detect import detect_external_parent, read_declared_version
 from app.ingest.workspace import SourceSpec, ingest
 from app.models.job import Job, JobEvent, TERMINAL_JOB_STATUSES
 from app.mvnrewrite.mvn_client import mvn_effective_pom
@@ -217,6 +217,14 @@ async def run_pipeline(
         current_version, _version_source = read_declared_version(effective_pom_path)
         suggested_version = compute_stage0_output_version(current_version, run_stage1) if current_version else None
 
+        # A <parent> on the ingested project's own root pom.xml that isn't a
+        # known public one may be a "사내 parent POM(BOM 겸용)" whose
+        # properties are the actual source of the detected stack above --
+        # Stage 1 can't touch that artifact's own files, only point at a
+        # newer released version of it (spec: docs/superpowers/specs/
+        # 2026-08-11-internal-parent-pom-target-version-design.md).
+        detected_parent = detect_external_parent(work_dir / "pom.xml")
+
         await log("마이그레이션 전 취약점 스캔 시작")
         baseline_scan_started_at = time.monotonic()
         baseline_vulns = await run_combined_scan(work_dir, output_dir, settings)
@@ -232,6 +240,7 @@ async def run_pipeline(
                 "status": "awaiting_version_approval",
                 "current_version": current_version,
                 "suggested_version": suggested_version,
+                "detected_parent": asdict(detected_parent) if detected_parent else None,
             },
         )
         return
@@ -272,6 +281,7 @@ async def run_pipeline_resume_after_version_confirm(
     confirmed_version: str,
     settings: Settings,
     session_factory: sessionmaker[Session],
+    parent_target_version: str | None = None,
 ) -> None:
     """Scheduled by POST /jobs/{id}/confirm-version for a job sitting at
     status="awaiting_version_approval". work_dir is exactly as Stage 0 left
@@ -306,7 +316,9 @@ async def run_pipeline_resume_after_version_confirm(
 
         if run_stage1:
             await log("1단계 스택 마이그레이션 시작")
-            stage1_result = await run_stage1_migration(job_id, work_dir, detected, baseline, settings, on_log=log)
+            stage1_result = await run_stage1_migration(
+                job_id, work_dir, detected, baseline, settings, parent_target_version=parent_target_version, on_log=log
+            )
             # Keep baseline in sync with whatever Stage 1 actually left in
             # work/ (spec: docs/superpowers/specs/2026-08-09-stage2-
             # baseline-drift-design.md) -- regardless of no_gap/success/
@@ -315,6 +327,21 @@ async def run_pipeline_resume_after_version_confirm(
             baseline = current_head(work_dir, settings)
             report_sections.append(stage1_result.report)
             await log(f"1단계 종료: {stage1_result.status}")
+
+            if not parent_target_version:
+                # work/의 <parent>는 parent_target_version을 안 줬으면 Stage 1이
+                # 안 건드렸으므로(§4.1), Stage 0가 감지했던 것과 동일한 상태 --
+                # 사람이 다음 실행 때 참고할 수 있게 리포트에 남겨둔다(spec:
+                # docs/superpowers/specs/2026-08-11-internal-parent-pom-
+                # target-version-design.md).
+                detected_parent = detect_external_parent(work_dir / "pom.xml")
+                if detected_parent is not None:
+                    report_sections.append(
+                        f"이 프로젝트의 스택 버전 일부는 사내 parent POM(`{detected_parent.group_id}:"
+                        f"{detected_parent.artifact_id}`)에서 관리됩니다 — 이 프로젝트만으로는 목표에 도달할 "
+                        "수 없습니다. parent를 먼저 올리거나, 이미 올라간 parent의 새 버전을 알고 있다면 "
+                        "다음 실행 시 입력하세요."
+                    )
 
             if stage1_result.status == "needs_handoff" and stage1_result.handoff_guide:
                 handoff_dir.mkdir(parents=True, exist_ok=True)
