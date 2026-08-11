@@ -5,7 +5,13 @@ from pathlib import Path
 import pytest
 
 from app.ingest.errors import GradleProjectError, NotMavenProjectError
-from app.ingest.maven_detect import ExternalParentInfo, detect_external_parent, detect_maven_project, read_declared_version
+from app.ingest.maven_detect import (
+    ExternalParentInfo,
+    detect_external_parent,
+    detect_maven_project,
+    read_declared_parent,
+    read_declared_version,
+)
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 
@@ -187,3 +193,30 @@ def test_detect_external_parent_returns_none_when_no_parent(tmp_path):
     pom_path.write_text(f'<project xmlns="{_POM_NS}"><modelVersion>4.0.0</modelVersion><artifactId>demo</artifactId></project>')
 
     assert detect_external_parent(pom_path) is None
+
+
+def test_read_declared_parent_returns_public_parent_unlike_detect_external_parent(tmp_path):
+    """Unlike detect_external_parent, read_declared_parent has no allowlist
+    filtering -- it's for display (the ingest log line), where a public
+    parent like spring-boot-starter-parent is still worth showing."""
+    pom_path = tmp_path / "pom.xml"
+    pom_path.write_text(f"""<project xmlns="{_POM_NS}">
+        <modelVersion>4.0.0</modelVersion>
+        <parent>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-parent</artifactId>
+            <version>2.7.18</version>
+        </parent>
+        <artifactId>demo</artifactId>
+    </project>""")
+
+    assert read_declared_parent(pom_path) == ExternalParentInfo(
+        group_id="org.springframework.boot", artifact_id="spring-boot-starter-parent", version="2.7.18"
+    )
+
+
+def test_read_declared_parent_returns_none_when_no_parent(tmp_path):
+    pom_path = tmp_path / "pom.xml"
+    pom_path.write_text(f'<project xmlns="{_POM_NS}"><modelVersion>4.0.0</modelVersion><artifactId>demo</artifactId></project>')
+
+    assert read_declared_parent(pom_path) is None

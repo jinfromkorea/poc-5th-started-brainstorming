@@ -36,7 +36,7 @@ from app.checkpoint.git_repo import commit_checkpoint, current_head, diff_since,
 from app.config import Settings
 from app.handoff.guide_builder import build_handoff_guide
 from app.ingest.errors import IngestError
-from app.ingest.maven_detect import detect_external_parent, read_declared_version
+from app.ingest.maven_detect import detect_external_parent, read_declared_parent, read_declared_version
 from app.ingest.workspace import SourceSpec, ingest
 from app.models.job import Job, JobEvent, TERMINAL_JOB_STATUSES
 from app.mvnrewrite.mvn_client import mvn_effective_pom
@@ -197,7 +197,13 @@ async def run_pipeline(
         work_dir = ingest_result.paths.work
         output_dir = ingest_result.paths.output
         baseline = ingest_result.baseline_commit
-        await log(f"모듈 {len(ingest_result.detection.modules)}개, baseline={baseline[:12]}")
+        # Raw (unfiltered) <parent> coordinates -- unlike detect_external_parent
+        # (Stage 0's internal-parent gate below), this shows public parents
+        # (e.g. spring-boot-starter-parent) too, since this line is purely
+        # informational.
+        declared_parent = read_declared_parent(work_dir / "pom.xml")
+        parent_label = f"{declared_parent.group_id}:{declared_parent.artifact_id}" if declared_parent else "none"
+        await log(f"모듈 {len(ingest_result.detection.modules)}개, parent={parent_label}, baseline={baseline[:12]}")
 
         if not (run_stage1 or run_stage2):
             await log("결과물 생성 중...")

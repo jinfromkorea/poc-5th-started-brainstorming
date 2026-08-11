@@ -130,6 +130,23 @@ class ExternalParentInfo:
     version: str | None  # <parent>에 <version> 텍스트가 비어 있는(malformed pom.xml) 방어적 케이스만 None
 
 
+def read_declared_parent(root_pom: Path) -> ExternalParentInfo | None:
+    """Raw <parent> coordinates on the project's own root pom.xml, with no
+    public/internal filtering (unlike detect_external_parent below) -- for
+    display purposes (e.g. the ingest log line), where "what <parent> does
+    this project declare, if any" matters regardless of whether it turns
+    out to be a known public one."""
+    root = _parse_pom(root_pom)
+    parent_el = root.find("{*}parent")
+    if parent_el is None:
+        return None
+    group_id = _text(parent_el, "groupId")
+    artifact_id = _text(parent_el, "artifactId")
+    if group_id is None or artifact_id is None:
+        return None
+    return ExternalParentInfo(group_id=group_id, artifact_id=artifact_id, version=_text(parent_el, "version"))
+
+
 def detect_external_parent(root_pom: Path) -> ExternalParentInfo | None:
     """Stage 0 calls this right after mvn_effective_pom/extract_versions,
     against the project's own *raw* (non-effective) root pom.xml. A <parent>
@@ -145,14 +162,9 @@ def detect_external_parent(root_pom: Path) -> ExternalParentInfo | None:
     2026-08-11-internal-parent-pom-target-version-design.md). Confirmed
     against a real case: anne-agent inherits java/spring-boot/spring-ai
     entirely from ace-parent (job #35/#38)."""
-    root = _parse_pom(root_pom)
-    parent_el = root.find("{*}parent")
-    if parent_el is None:
+    parent = read_declared_parent(root_pom)
+    if parent is None:
         return None
-    group_id = _text(parent_el, "groupId")
-    artifact_id = _text(parent_el, "artifactId")
-    if group_id is None or artifact_id is None:
+    if (parent.group_id, parent.artifact_id) in _PUBLIC_PARENT_ALLOWLIST:
         return None
-    if (group_id, artifact_id) in _PUBLIC_PARENT_ALLOWLIST:
-        return None
-    return ExternalParentInfo(group_id=group_id, artifact_id=artifact_id, version=_text(parent_el, "version"))
+    return parent
