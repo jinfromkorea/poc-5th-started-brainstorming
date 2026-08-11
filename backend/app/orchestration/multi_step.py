@@ -25,7 +25,7 @@ from app.orchestration.planning import MigrationPlan, PlanStep, build_migration_
 from app.orchestration.progress import LogFn, noop_log
 from app.reporting.report_builder import StepOutcome, build_report
 
-TARGET_STACK_SUMMARY = "Java 21 / Spring Boot 4.1 / Spring Cloud 2025.1 / Spring AI 2.0"
+TARGET_STACK_SUMMARY = "Java 21 / Spring Boot 4.1 / Spring Cloud 2025.1 / Spring AI 2"
 
 RunStatus = Literal["success", "needs_handoff", "no_gap"]
 

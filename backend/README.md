@@ -1,6 +1,6 @@
 # Maven Stack Upgrade Tool — Backend
 
-사내 Maven 시스템을 Java 21 / Spring Boot 4.1 / Spring Cloud 2025.1 / Spring AI 2.0으로 마이그레이션하고, 남은 개별 OSS 취약점을 패치하는 도구의 백엔드(FastAPI)입니다.
+사내 Maven 시스템을 Java 21 / Spring Boot 4.1 / Spring Cloud 2025.1 / Spring AI 2로 마이그레이션하고, 남은 개별 OSS 취약점을 패치하는 도구의 백엔드(FastAPI)입니다.
 
 설계 배경은 [`docs/superpowers/specs/2026-08-06-oss-dependency-governance-design.md`](../docs/superpowers/specs/2026-08-06-oss-dependency-governance-design.md)를 참고하세요.
 

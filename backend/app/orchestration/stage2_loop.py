@@ -18,7 +18,7 @@ from app.orchestration.graph_stage2 import run_stage2_vulnerability
 from app.orchestration.progress import LogFn, noop_log
 from app.scan.merge import Vulnerability
 
-TARGET_STACK_SUMMARY = "Java 21 / Spring Boot 4.1 / Spring Cloud 2025.1 / Spring AI 2.0"
+TARGET_STACK_SUMMARY = "Java 21 / Spring Boot 4.1 / Spring Cloud 2025.1 / Spring AI 2"
 
 VulnStatus = Literal["success", "needs_handoff"]
 
