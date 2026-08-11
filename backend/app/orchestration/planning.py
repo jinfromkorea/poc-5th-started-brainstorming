@@ -148,7 +148,18 @@ def build_migration_plan(
     # This also means the check no longer depends on iterating boot_hops --
     # a project already sitting on Boot 4.x with no Boot steps needed at all
     # still gets its Spring AI step.
-    if detected.spring_ai_version is not None and target_boot.startswith("4."):
+    #
+    # _major_minor(...) != target_ai mirrors the Spring Boot hop loop above
+    # (which stops once `current == target_boot`) -- without it, a project
+    # already sitting on the target Spring AI version still got a pointless
+    # "X -> X" step that re-ran the upgrade recipe for nothing (confirmed
+    # live: job re-running UpgradeSpringAi_2_0 against an already-2.0.0
+    # project, 59.5s wasted on a no-op recipe run).
+    if (
+        detected.spring_ai_version is not None
+        and target_boot.startswith("4.")
+        and _major_minor(detected.spring_ai_version) != target_ai
+    ):
         ai_hop = next((s for s in catalog.spring_ai_steps if s.to_version == target_ai), None)
         if ai_hop is not None and ai_hop.recipe is not None:
             steps.append(

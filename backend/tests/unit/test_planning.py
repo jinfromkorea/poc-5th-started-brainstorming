@@ -144,6 +144,19 @@ def test_spring_ai_step_still_inserted_when_already_at_target_boot():
     assert ai_steps[0].recipe == "io.arconia.rewrite.spring.ai2.UpgradeSpringAi_2_0"
 
 
+def test_spring_ai_step_omitted_when_already_at_target():
+    """Regression test: unlike the Spring Boot hop loop (which stops once
+    current == target_boot), the Spring AI branch used to have no
+    already-at-target check at all -- a project already on the target
+    Spring AI version still got a pointless "X -> X" step that re-ran the
+    upgrade recipe for nothing (confirmed live: 59.5s spent re-running
+    UpgradeSpringAi_2_0 against an already-2.0.0 project). major.minor
+    comparison (not exact string equality) so a patch version like 2.0.1
+    still counts as "already there"."""
+    plan = _plan(spring_boot_version="4.1.0", spring_ai_version="2.0.0")
+    assert all(s.kind != "spring_ai" for s in plan.steps)
+
+
 def test_third_party_suffix_added_for_any_step_kind_flagged_third_party():
     """Exercises the suffix mechanism itself (not tied to which specific
     catalog entry happens to be third-party today) using a patched catalog."""
