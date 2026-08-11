@@ -208,6 +208,18 @@ main {
   box-shadow: var(--shadow);
 }
 
+.section-divider {
+  margin-top: 12px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+}
+
+.section-divider h2 {
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  margin: 0 0 4px;
+}
+
 .card h2 {
   font-family: var(--font-mono);
   margin-top: 0;
