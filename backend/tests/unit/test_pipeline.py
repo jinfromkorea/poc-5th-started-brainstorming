@@ -49,6 +49,11 @@ def job_paths(tmp_path):
     paths = WorkspacePaths(root=root, source=root / "source", work=root / "work", output=root / "output")
     for d in (paths.source, paths.work, paths.output):
         d.mkdir(parents=True)
+    # Real ingest() always populates source/ before work/ is copied from it
+    # (ingest/workspace.py) -- run_pipeline's Stage 0 now reads source/
+    # directly (mvn effective-pom, parent detection, vuln scan all run
+    # there), so this fixture needs a pom.xml there too, not just work/.
+    (paths.source / "pom.xml").write_text("<project/>")
     (paths.work / "pom.xml").write_text("<project/>")
     return paths
 

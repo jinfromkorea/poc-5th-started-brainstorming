@@ -194,6 +194,7 @@ async def run_pipeline(
     try:
         await log("POM 분석 시작")
         ingest_result = ingest(job_id, spec, settings)
+        source_dir = ingest_result.paths.source
         work_dir = ingest_result.paths.work
         output_dir = ingest_result.paths.output
         baseline = ingest_result.baseline_commit
@@ -201,7 +202,7 @@ async def run_pipeline(
         # (Stage 0's internal-parent gate below), this shows public parents
         # (e.g. spring-boot-starter-parent) too, since this line is purely
         # informational.
-        declared_parent = read_declared_parent(work_dir / "pom.xml")
+        declared_parent = read_declared_parent(source_dir / "pom.xml")
         parent_label = f"{declared_parent.group_id}:{declared_parent.artifact_id}" if declared_parent else "none"
         await log(f"모듈 {len(ingest_result.detection.modules)}개, parent={parent_label}, baseline={baseline[:12]}")
 
@@ -215,9 +216,17 @@ async def run_pipeline(
             return
 
         await log("Stage 0: 현재 버전/스택 분석 시작")
+        # Stage 0 analyzes source/ end to end (mvn effective-pom, parent
+        # detection, vulnerability scan below) -- work/ was already copied
+        # from source/ during ingest, before any of this runs, so nothing
+        # Stage 0 does here (including the real `mvn install` the
+        # vulnerability scan needs) can leak into work/'s state. source/'s
+        # own files are never edited, only build artifacts (target/ etc.)
+        # get added alongside them -- and nothing else in this codebase
+        # reads source/ again after ingest, so that's harmless.
         effective_pom_path = output_dir / "effective-pom.xml"
         await mvn_effective_pom(
-            work_dir, effective_pom_path, settings, log_path=build_log_path(output_dir, "ingest", "mvn-effective-pom")
+            source_dir, effective_pom_path, settings, log_path=build_log_path(output_dir, "ingest", "mvn-effective-pom")
         )
         detected = extract_versions(effective_pom_path)
 
@@ -230,7 +239,7 @@ async def run_pipeline(
         # here (before the inventory emit) so the "분석" panel can show it
         # alongside the stack it actually explains, not just later in the
         # version-approval gate.
-        detected_parent = detect_external_parent(work_dir / "pom.xml")
+        detected_parent = detect_external_parent(source_dir / "pom.xml")
         await emit("inventory", {**asdict(detected), "detected_parent": asdict(detected_parent) if detected_parent else None})
 
         current_version, _version_source = read_declared_version(effective_pom_path)
@@ -238,7 +247,7 @@ async def run_pipeline(
 
         await log("마이그레이션 전 취약점 스캔 시작")
         baseline_scan_started_at = time.monotonic()
-        baseline_vulns = await run_combined_scan(work_dir, output_dir, settings)
+        baseline_vulns = await run_combined_scan(source_dir, output_dir, settings)
         await emit("vulnerabilities_baseline", {"vulnerabilities": [asdict(v) for v in baseline_vulns]})
         baseline_scan_elapsed = time.monotonic() - baseline_scan_started_at
         await log(f"마이그레이션 전 취약점 스캔 완료 ({baseline_scan_elapsed:.1f}s)")
