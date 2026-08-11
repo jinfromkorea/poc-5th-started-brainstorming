@@ -117,3 +117,31 @@ def test_read_declared_version_returns_none_when_absent(tmp_path):
     </project>""")
 
     assert read_declared_version(pom_path) == (None, "none")
+
+
+def test_read_declared_version_from_multi_module_effective_pom_projects_wrapper(tmp_path):
+    """Regression test for job #35: `mvn help:effective-pom` against a
+    multi-module reactor wraps multiple <project> elements in a top-level
+    <projects> (confirmed empirically against a real ace-parent run, root
+    module always first) instead of a bare <project> root. Every caller of
+    read_declared_version passes such an effective POM, never the project's
+    own raw pom.xml -- treating <projects> as if it were <project> silently
+    finds no <version>/<parent> and returns (None, "none") for every
+    multi-module project."""
+    pom_path = tmp_path / "effective-pom.xml"
+    pom_path.write_text(f"""<projects>
+        <project xmlns="{_POM_NS}">
+            <modelVersion>4.0.0</modelVersion>
+            <groupId>com.example</groupId>
+            <artifactId>reactor-root</artifactId>
+            <version>0.4.5</version>
+            <packaging>pom</packaging>
+        </project>
+        <project xmlns="{_POM_NS}">
+            <modelVersion>4.0.0</modelVersion>
+            <artifactId>reactor-child</artifactId>
+            <version>0.4.5</version>
+        </project>
+    </projects>""")
+
+    assert read_declared_version(pom_path) == ("0.4.5", "version")

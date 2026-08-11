@@ -16,6 +16,7 @@ from pathlib import Path
 from lxml import etree
 
 from app.ingest.errors import GradleProjectError, NotMavenProjectError
+from app.mvnrewrite.pom_parser import _project_root
 
 _GRADLE_MARKERS = ("build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts")
 
@@ -89,8 +90,19 @@ def read_declared_version(root_pom: Path) -> tuple[str | None, str]:
     its own <version>, "parent.version" if only inherited via <parent> (the
     literal XML value, not mvn-resolved), or "none" if neither is present.
     Used by the pre-submission output-version suggestion (spec:
-    docs/superpowers/specs/2026-08-10-output-version-suggestion-design.md)."""
-    root = _parse_pom(root_pom)
+    docs/superpowers/specs/2026-08-10-output-version-suggestion-design.md).
+
+    Every caller passes an *effective* POM (mvn_client.mvn_effective_pom),
+    not the project's own raw pom.xml -- and `mvn help:effective-pom` run
+    against a multi-module reactor wraps its output in a top-level
+    <projects> holding one <project> per module (root module first) instead
+    of a bare <project> root (see pom_parser._project_root's docstring,
+    confirmed empirically against a real ace-parent reactor). Using
+    _parse_pom's raw .getroot() here would silently treat <projects> as if
+    it were <project>, find no <version>/<parent> as direct children, and
+    return (None, "none") for every multi-module project -- job #35's
+    "no current version detected" bug."""
+    root = _project_root(root_pom)
     version = _text(root, "version")
     if version:
         return version, "version"
