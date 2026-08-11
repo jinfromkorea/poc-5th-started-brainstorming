@@ -312,25 +312,35 @@ function showVersionApprovalPanel(currentVersion, suggestedVersion, detectedPare
   confirmVersionInput.value = suggestedVersion ?? "";
   confirmVersionBtn.disabled = false;
 
-  if (detectedParent) {
-    parentVersionField.classList.remove("hidden");
-    parentVersionHint.classList.remove("hidden");
-    parentVersionHint.textContent =
-      `이 프로젝트는 사내 parent POM(${detectedParent.group_id}:${detectedParent.artifact_id}, ` +
-      `현재 ${detectedParent.version ?? "-"})에서 스택 버전을 상속받습니다. 이미 목표 스택으로 올라간 ` +
-      `새 버전이 있다면 입력하세요 (선택).`;
-  } else {
-    parentVersionField.classList.add("hidden");
-    parentVersionHint.classList.add("hidden");
-    parentTargetVersionInput.value = "";
+  // Guarded against a stale cached index.html/job.html without these newer
+  // elements (static file server has no cache-busting) -- without this, a
+  // null reference here would throw and abort the rest of the "status"
+  // handler below, silently breaking loadArtifacts() for every later status
+  // update including terminal ones (diff/report/handoff buttons never
+  // populate, even though the backend has them).
+  if (parentVersionField && parentVersionHint && parentTargetVersionInput) {
+    if (detectedParent) {
+      parentVersionField.classList.remove("hidden");
+      parentVersionHint.classList.remove("hidden");
+      parentVersionHint.textContent =
+        `이 프로젝트는 사내 parent POM(${detectedParent.group_id}:${detectedParent.artifact_id}, ` +
+        `현재 ${detectedParent.version ?? "-"})에서 스택 버전을 상속받습니다. 이미 목표 스택으로 올라간 ` +
+        `새 버전이 있다면 입력하세요 (선택).`;
+    } else {
+      parentVersionField.classList.add("hidden");
+      parentVersionHint.classList.add("hidden");
+      parentTargetVersionInput.value = "";
+    }
   }
 }
 
 function hideVersionApprovalPanel() {
   versionApprovalPanel.classList.add("hidden");
-  parentVersionField.classList.add("hidden");
-  parentVersionHint.classList.add("hidden");
-  parentTargetVersionInput.value = "";
+  if (parentVersionField && parentVersionHint && parentTargetVersionInput) {
+    parentVersionField.classList.add("hidden");
+    parentVersionHint.classList.add("hidden");
+    parentTargetVersionInput.value = "";
+  }
 }
 
 confirmVersionBtn.addEventListener("click", async () => {
