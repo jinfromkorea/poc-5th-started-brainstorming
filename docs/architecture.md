@@ -1,6 +1,6 @@
 # Maven Stack Upgrade Tool — 아키텍처
 
-- 작성일: 2026-08-07 (2026-08-11 개정: Stage 0 버전 확인 게이트, 작업 취소/삭제, 파일별 diff 뷰어, LLM 모델 설정 반영)
+- 작성일: 2026-08-07 (2026-08-11 개정: Stage 0 버전 확인 게이트, 작업 취소/삭제, 파일별 diff 뷰어, LLM 모델 설정 반영. 2026-08-12 개정: job 상태 stage1/stage2 분리 + 1단계 인수인계 후 재개, 사내 parent POM 목표 버전 전이, `index.html` 제출 폼/설명 콘텐츠와 `job.html` 진행 상황 뷰 분리 반영)
 - 이 문서는 실제 구현(`backend/`, `frontend/`)을 기준으로 정리한 아키텍처 문서다. 설계 배경/의사결정 근거는 [`docs/superpowers/specs/2026-08-06-oss-dependency-governance-design.md`](superpowers/specs/2026-08-06-oss-dependency-governance-design.md)(이하 "설계 스펙")를 참고한다. 이 문서는 그 스펙이 실제로 어떤 모듈/파일로 구현됐는지를 코드 기준으로 매핑한다.
 
 ## 1. 한 줄 요약
@@ -33,9 +33,10 @@ backend/     FastAPI 백엔드 — 이 도구의 실제 구현체
   tests/           unit/(항상 실행) + integration/ — 후자는 마커 없는 API 레벨 테스트(기본 실행), `slow`(실제 mvn·git·java 필요), `external`(네트워크·시크릿 필요) 마커 테스트가 섞여 있고 기본 `pytest`는 `slow`/`external` 둘 다 제외(`addopts`)
 
 frontend/    정적 HTML/CSS/JS — 빌드 단계 없음, 백엔드와 별도 배포
-  index.html (새 작업), history.html (이력), job.html (상세), files.html (파일별 diff)
-  assets/common.js (연결 설정 + 설정 모달), assets/job-view.js (진행상황/분석/결과물, index.html·job.html 공용)
-  assets/app.js (index.html 전용), assets/history.js, assets/job.js, assets/files.js, assets/app.css
+  index.html (새 작업 제출 폼 + Stage 0/1/2 LangGraph 개요 — 정적 콘텐츠, JS 진행상황 뷰 없음)
+  history.html (이력), job.html (상세, 진행상황/분석/결과물 뷰), files.html (파일별 diff)
+  assets/common.js (연결 설정 + 설정 모달), assets/job-view.js (진행상황/분석/결과물, job.html 전용)
+  assets/app.js (index.html 전용 — 제출 후 job.html로 이동), assets/history.js, assets/job.js, assets/files.js, assets/app.css
   assets/vendor/ (jQuery/jsTree 로컬 번들 — CDN 미사용)
 
 data/        참고용 사내 Maven 저장소 ZIP (도구가 다루는 입력 예시, 도구 코드 아님)
@@ -166,6 +167,17 @@ sequenceDiagram
 
 `awaiting_version_approval`은 `awaiting_approval`(§7.4)과 마찬가지로 의도적으로 터미널 상태가 아니다(`models/job.py`의 `TERMINAL_JOB_STATUSES`에 없음) — `POST /jobs/{id}/cancel`이 이 상태를 살아있는 Task 없이 바로 `cancelled`로 마감할 수 있는 것도 같은 이유(§7.4의 `_finalize_cancelled` 경로 재사용).
 
+### 4.2 사내 parent POM(BOM 겸용) 목표 버전 전이
+
+설계 배경: [`docs/superpowers/specs/2026-08-11-internal-parent-pom-target-version-design.md`](superpowers/specs/2026-08-11-internal-parent-pom-target-version-design.md).
+
+`mvn effective-pom`으로 뽑은 스택 버전(§4.1의 1번)은 상속 체인까지 반영된 최종 병합 결과라, 프로젝트의 루트 `pom.xml`이 사내 공용 parent POM(BOM 겸용, 예: `ace-parent`)을 상속하고 있으면 그 parent가 정의한 값이 이미 녹아 있다. 이 경우 Stage 1이 이 프로젝트 자신의 파일만 아무리 고쳐도 목표 스택에 도달할 수 없다 — parent 자체의 새 버전을 가리키는 것 말고는 방법이 없다.
+
+- **감지**(`ingest/maven_detect.detect_external_parent`): 프로젝트 자신의 원본(effective 아님) `pom.xml`의 `<parent>`가 알려진 공개 parent(`_PUBLIC_PARENT_ALLOWLIST`, 현재는 `spring-boot-starter-parent`만) 목록에 없으면 "사내 parent POM일 수 있다"고 판단한다. `run_pipeline`이 Stage 0의 `inventory` 이벤트(분석 패널)와 `awaiting_version_approval`의 `status` 이벤트(`detected_parent` 필드) 양쪽에 이 결과를 실어 보낸다.
+- **입력**: 확인 패널에 "사내 parent POM 목표 버전" 입력창이 조건부로 뜬다(감지됐을 때만). `POST /jobs/{id}/confirm-version`의 `parent_target_version`으로 전달 — 비워두면(기본) 이 프로젝트만 마이그레이션하고 parent는 그대로 둔다. 감지된 현재 parent 버전과 같은 값을 넣으면 409(출력 버전과 동일한 정책).
+- **적용**(Stage 1, `orchestration/multi_step.run_stage1_migration`): `parent_target_version`이 있으면 계획의 맨 앞에 `parent_pom` 스텝을 하나 끼워 넣는다 — OpenRewrite 레시피가 아니라 `mvnrewrite/parent_patch.patch_parent_version`(XML `<parent><version>` 텍스트를 직접 교체하는 mechanical 패치, `mvn versions:update-parent`가 지정한 값보다 높은 버전으로 새는 걸 실측으로 확인해 직접 XML 조작으로 바꿨다)로 처리하지만, 검증/커밋/실패 시 인수인계 가이드는 다른 스텝과 동일한 Stage 1 그래프(§7.2)를 그대로 탄다. 이 스텝이 성공하면 `mvn effective-pom`을 다시 돌려 재분석하고(새 parent 버전이 가져온 스택으로), 그 값으로 나머지 계획(`build_migration_plan`)을 다시 세운다 — 막혔던 지점을 저장해두지 않고, 재분석된 현재 상태가 자연스럽게 이미 끝난 스텝을 계획에서 빼준다(§7.6의 인수인계 후 재개가 재사용하는 것과 같은 패턴).
+- **목표 버전을 안 준 경우**: parent가 감지됐는데도 `parent_target_version`을 비워뒀다면, 1단계가 끝난 뒤 리포트에 "이 프로젝트만으로는 목표에 도달할 수 없습니다" 안내 문구가 남는다(`run_pipeline_resume_after_version_confirm`).
+
 ## 5. 인입 파이프라인 (`ingest/`, `checkpoint/`)
 
 설계 스펙의 인입 다이어그램을 그대로 구현한다.
@@ -266,7 +278,7 @@ stateDiagram-v2
 
 1. **검증** (`orchestration/multi_step.verify_after_manual_fix`) — `mvn test-compile` 한 번만 실행한다. AI 재시도는 하지 않는다 — 사람이 직접 고친 결과를 확인만 하는 동작이라, AI를 다시 태우면 사람의 의도와 다르게 또 고칠 위험이 있다(job #44에서 AI가 원래 맞았던 import를 오히려 틀리게 고친 사례가 실제로 있었다 — `docs/lessons-learned/2026-08-11-jackson3-objectmapper-migration.md`).
 2. **검증 실패** → 아무것도 커밋하지 않고 `stage1_needs_handoff`로 되돌아간다. `output/handoff/stage1-guide.md`를 최신 빌드 출력으로 덮어써서 재시도할 수 있게 한다.
-3. **검증 성공** → 체크포인트 커밋 후 `mvn effective-pom`을 다시 돌려 현재 `work/`의 실제 스택을 재분석하고(사내 parent POM 기능, §4.1과 동일한 재분석 패턴), `run_stage1_migration`을 그 값으로 다시 호출해 나머지 계획을 이어서 실행한다 — 막혔던 스텝이 몇 번째였는지는 어디에도 저장하지 않는다. 재분석된 버전이 이미 반영된 수정을 나타내므로 `build_migration_plan`이 자연스럽게 다음 스텝부터 계획을 세운다.
+3. **검증 성공** → 체크포인트 커밋 후 `mvn effective-pom`을 다시 돌려 현재 `work/`의 실제 스택을 재분석하고(사내 parent POM 기능, §4.2와 동일한 재분석 패턴), `run_stage1_migration`을 그 값으로 다시 호출해 나머지 계획을 이어서 실행한다 — 막혔던 스텝이 몇 번째였는지는 어디에도 저장하지 않는다. 재분석된 버전이 이미 반영된 수정을 나타내므로 `build_migration_plan`이 자연스럽게 다음 스텝부터 계획을 세운다.
 4. 재개가 끝까지 성공하면 1차 시도 때 남은 `output/handoff/stage1-guide.md`를 지운다 — 안 지우면 성공한 job인데도 "아직 인수인계 필요"라는 낡은 파일이 결과물 목록에 남는다. 또 막히면 새 가이드로 덮어쓰고 다시 `stage1_needs_handoff`(반복 가능).
 
 `report_markdown`은 1차 시도 리포트 뒤에 이번 재개 결과를 이어붙인다(`run_pipeline_resume_stage2`와 동일한 패턴).
@@ -366,7 +378,7 @@ flowchart LR
 | `POST /jobs` | Git URL 또는 ZIP(둘 중 정확히 하나) + 옵션(1/2단계 실행 여부)으로 job 생성, 202 즉시 반환. 출력 버전은 인자로 안 받는다 — Stage 0가 자동 계산(§4.1) |
 | `GET /jobs` | 전체 job 목록, `created_at` 내림차순 |
 | `GET /jobs/{id}` | job 상태 폴링 |
-| `POST /jobs/{id}/confirm-version` | `awaiting_version_approval` 상태인 job에 출력 버전을 확인하고 1/2단계 진행(§4.1). 그 상태가 아니면 409, 확인값이 현재 버전과 같아도 409 |
+| `POST /jobs/{id}/confirm-version` | `awaiting_version_approval` 상태인 job에 출력 버전을 확인하고 1/2단계 진행(§4.1). 그 상태가 아니면 409, 확인값이 현재 버전과 같아도 409. 사내 parent POM이 감지된 경우 `parent_target_version`도 선택적으로 받는다(§4.2) — 감지된 현재 parent 버전과 같아도 409 |
 | `POST /jobs/{id}/proceed` | `awaiting_approval` 상태인 job의 2단계를 재개(§7.4). 그 상태가 아니면 409 |
 | `POST /jobs/{id}/resume-stage1` | `stage1_needs_handoff` 상태인 job을, 사람이 `work/`를 직접 고친 뒤 검증하고 1단계를 이어서 진행(§7.6). 그 상태가 아니면 409 |
 | `POST /jobs/{id}/cancel` | 터미널이 아닌 job을 강제 중지. 살아있는 Task가 있으면 취소, `awaiting_*` 상태처럼 Task가 없으면 즉시 `cancelled`로 마감 |
@@ -385,11 +397,11 @@ flowchart LR
 
 ## 12. 프론트엔드 (`frontend/`)
 
-빌드 단계 없는 정적 HTML + vanilla JS, 4개 페이지로 구성 (`index.html`/`history.html`/`job.html`/`files.html`). 공용 로직은 `assets/common.js`(연결 설정 + 설정 모달)와 `assets/job-view.js`(진행 상황/분석/결과물 뷰, SSE, `index.html`/`job.html` 공유)로 분리해 페이지들이 나눠 쓴다.
+빌드 단계 없는 정적 HTML + vanilla JS, 4개 페이지로 구성 (`index.html`/`history.html`/`job.html`/`files.html`). 공용 로직은 `assets/common.js`(연결 설정 + 설정 모달, 네 페이지 전부)와 `assets/job-view.js`(진행 상황/분석/결과물 뷰, SSE — `job.html` 전용)로 분리한다. `index.html`은 제출 폼 + 정적 설명 콘텐츠만 담당하고 진행 상황은 전혀 다루지 않는다(아래 `index.html` 항목 참고) — `job-view.js`를 아예 로드하지 않는다.
 
 - **연결 설정 + 캐시 상태 + LLM 모델**: 헤더 우상단 설정(⚙) 아이콘 클릭 시 뜨는 모달(네 페이지 모두 동일)에서 API 서버 주소/토큰 입력(`localStorage`, 페이지 간 공유), NVD/Trivy 마지막 갱신 시각 + "지금 갱신" 버튼(§8.4), 그리고 `GET /settings/llm-model`로 채워지는 LLM 모델 드롭다운(§11) — 선택 즉시 반영되고 별도 저장 버튼은 없다. 캐시 갱신은 모달을 열 때마다 `GET /cache/status`를 호출하고, 이미 갱신 중이면 그 job의 SSE에 바로 연결해 아이콘 회전을 이어간다. 갱신 버튼 클릭 시 `POST /cache/refresh` → `job_id`로 `EventSource`를 열어 `log` 이벤트마다 상태 텍스트를 그 메시지로 갱신(별도 로그 패널 없이 "현재 단계" 한 줄만 표시), 종료 상태에서 아이콘 정지 + `GET /cache/status` 재조회.
-- **`index.html`**: Git URL 또는 ZIP 업로드(라디오로 전환), 1/2단계 실행 체크박스. 출력 아티팩트 버전 입력 필드는 없다 — Stage 0가 자동 계산해 사람이 확인하는 흐름(§4.1)으로 바뀌었기 때문. 제출 시 `POST /jobs` → 받은 `job_id`로 `EventSource`를 연다.
-- **진행 상황 뷰**(`job-view.js`, `index.html`/`job.html` 공용): `log`/`status`/`inventory`/`vulnerabilities_baseline`/`vulnerabilities_post_stage1`/`vulnerabilities`/`vulnerabilities_final` 이벤트를 실시간 렌더링 — "분석" 카드(감지된 스택 + 취약점 테이블 최대 4개: 마이그레이션 전/후, 2단계 패치 대상, 최종 — §4.1, §7.5, §8.1, §8.3)가 진행 상황 카드 **아래**에 표시된다. "진행 상황" 제목 옆 "?" 아이콘으로 LangGraph 오케스트레이션(§7.2, §8.2) 다이어그램 모달을 볼 수 있다.
+- **`index.html`**: Git URL 또는 ZIP 업로드(라디오로 전환), 1/2단계 실행 체크박스. 출력 아티팩트 버전 입력 필드는 없다 — Stage 0가 자동 계산해 사람이 확인하는 흐름(§4.1)으로 바뀌었기 때문. 제출 시 `POST /jobs` 202 응답의 `job_id`로 곧장 `job.html?job={job_id}`로 이동한다 — `index.html` 자체는 진행 상황을 보여주지 않는다(SSE 연결도 안 함). 제출 폼 아래에는 "파이프라인 동작 방식" 구분선과 함께 Stage 0/1/2를 요약하는 정적 LangGraph 다이어그램 3개(`stage0-overview`/`stage1-overview`/`stage2-overview`)가 있다 — Stage 1/2 다이어그램은 아래 진행 상황 뷰의 도움말 모달과 같은 SVG를 그대로 재사용하고, Stage 0(선형 흐름이라 자가검증 루프가 아님)는 별도로 그렸다. 실시간 데이터가 아니라 순수 설명용 콘텐츠라는 점을 문구로 명시해둔다.
+- **진행 상황 뷰**(`job-view.js`, `job.html` 전용): `log`/`status`/`inventory`/`vulnerabilities_baseline`/`vulnerabilities_post_stage1`/`vulnerabilities`/`vulnerabilities_final` 이벤트를 실시간 렌더링 — "분석" 카드(감지된 스택 + 취약점 테이블 최대 4개: 마이그레이션 전/후, 2단계 패치 대상, 최종 — §4.1, §7.5, §8.1, §8.3)가 진행 상황 카드 **아래**에 표시된다. "진행 상황" 제목 옆 "?" 아이콘으로 LangGraph 오케스트레이션(§7.2, §8.2) 다이어그램 모달을 볼 수 있다.
   - `status`가 `awaiting_version_approval`이면 감지된 현재/제안 버전을 보여주는 확인 패널이 뜬다(입력창에 제안값 프리필) — "확인하고 계속" 클릭 시 `POST /jobs/{id}/confirm-version` 호출, 동일 버전이면 백엔드가 409를 돌려주고 그 에러를 로그에 남긴 뒤 재시도 가능하게 둔다(§4.1).
   - `status`가 `awaiting_approval`이면 "2단계로 진행(승인)" 버튼이 나타나고(§7.4), 클릭 시 `POST /jobs/{id}/proceed` 호출 후 버튼만 숨김 — SSE는 재연결 없이 이어지는 이벤트를 그대로 받는다.
   - `status`가 `stage1_needs_handoff`이면 "인수인계 후 재개" 버튼이 나타나고(§7.6), 클릭 시 `POST /jobs/{id}/resume-stage1` 호출 후 버튼을 숨긴다 — 이 상태는 터미널이라 SSE가 이미 닫혀 있으므로(§10), `proceed`와 달리 `connectSSE`를 다시 호출해 재연결한다.
@@ -397,7 +409,7 @@ flowchart LR
   - 종료 상태 도달 시 연결을 닫고 `GET /jobs/{id}/artifacts` 조회.
 - **결과물 뷰어**: diff/report/handoff 각각 클릭 시 원문을 불러와 표시, 복사(클립보드)와 다운로드(Blob) 버튼 제공. diff가 있으면 "파일별로 보기" 링크로 `files.html?job={id}`로 이동할 수 있다.
 - **`history.html`**: `GET /jobs`로 전체 이력을 최신순 테이블로 표시, job_id 클릭 시 `job.html?job={id}`로 이동. 진행 중인 job 행에는 "중지"(`POST /jobs/{id}/cancel`) 버튼이, 터미널 상태인 job 행에는 "삭제"(`DELETE /jobs/{id}`, 확인 다이얼로그 후) 버튼이 뜬다 — 중지되면 그 행이 자동으로 "삭제" 버튼으로 바뀐다. `source_type="cache_refresh"` job은 목록에 나타나지 않는다(§8.4).
-- **`job.html`**: URL 쿼리의 `job_id`로 `GET /jobs/{id}` 조회 후 진행 상황 뷰를 재사용 — 종료된 job은 SSE가 히스토리를 replay하고 바로 닫히므로 "로그 다시 보기"로도 동작.
+- **`job.html`**: URL 쿼리의 `job_id`로 `GET /jobs/{id}` 조회 후 진행 상황 뷰(`job-view.js`)를 로드 — `index.html`에서 막 제출한 job이든 `history.html`에서 클릭해 들어온 이전 job이든 같은 화면을 쓴다. 종료된 job은 SSE가 히스토리를 replay하고 바로 닫히므로 "로그 다시 보기"로도 동작.
 - **`files.html`**: `GET /jobs/{id}/artifacts/tree`로 받은 파일 트리를 jsTree(`assets/vendor/`에 로컬 번들, CDN 아님)로 렌더링 — 기본 접힘, `target/`/`.git` 등 노이즈 디렉터리 제외, 폴더가 파일보다 먼저 정렬, "전체 펼치기"/"전체 접기" 버튼. 파일 클릭 시 `GET /jobs/{id}/artifacts/file?path=...`로 baseline 대비 전/후 내용을 좌우로 보여준다(바이너리면 미리보기 대신 안내 문구, 새로 추가된 파일은 왼쪽에 안내 문구).
 - CORS: 백엔드의 `CORS_ALLOW_ORIGINS`가 프론트엔드가 뜬 오리진과 일치해야 함(기본 `http://localhost:5500`). `file://`로 직접 열지 말 것(오리진이 `null`이라 CORS 처리가 예측 불가).
 
