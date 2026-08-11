@@ -1,7 +1,7 @@
 # LangGraph 오케스트레이션 — Stage 1 / Stage 2 자가검증 루프
 
-- 작성일: 2026-08-08
-- 이 문서는 `backend/app/orchestration/` 중 실제로 **LangGraph `StateGraph`로 구현된 부분만** 그래프 단위로 상세히 정리한다. 전체 파이프라인(인입 → Stage1 → Stage2 → 산출물) 흐름은 [`docs/architecture.md`](architecture.md) §4·§7·§8을 참고하고, 이 문서는 그중 "LangGraph가 실제로 어디에 있고 각 노드가 뭘 하는지"에만 집중한다.
+- 작성일: 2026-08-08 (2026-08-11 개정: Stage 0 도입으로 바뀐 외부 루프 호출자 반영)
+- 이 문서는 `backend/app/orchestration/` 중 실제로 **LangGraph `StateGraph`로 구현된 부분만** 그래프 단위로 상세히 정리한다. 전체 파이프라인(인입 → Stage 0 → Stage1 → Stage2 → 산출물) 흐름은 [`docs/architecture.md`](architecture.md) §4·§4.1·§7·§8을 참고하고, 이 문서는 그중 "LangGraph가 실제로 어디에 있고 각 노드가 뭘 하는지"에만 집중한다.
 
 ## 1. 어디에 LangGraph가 있는가
 
@@ -164,7 +164,7 @@ flowchart TD
 ```
 
 - **`run_stage1_step`/`run_stage1_single_step`** (`graph_stage1.py`)와 **`run_stage2_vulnerability`** (`graph_stage2.py`)는 매번 `build_stage1_graph`/`build_stage2_graph`로 그래프를 **새로 컴파일**하고 `ainvoke`로 한 번 실행한 뒤 버린다 — 그래프 인스턴스를 여러 스텝/CVE에 걸쳐 재사용하지 않는다(무거운 컴파일 비용은 없고, `on_log` 클로저가 매번 다시 바인딩되어야 하기 때문).
-- 두 외부 루프 모두 `orchestration/pipeline.py`의 `run_pipeline`(Stage 1) / `_run_stage2_block`(Stage 2, `run_pipeline`과 HITL 재개 경로 `run_pipeline_resume_stage2` 양쪽에서 공유)이 호출한다. 전체 파이프라인 그림은 [`docs/architecture.md`](architecture.md) §4를 참고.
+- `run_pipeline`은 인입과 Stage 0(버전 확인 게이트, [`architecture.md`](architecture.md) §4.1)까지만 하고 멈춘다 — Stage 1/2 외부 루프는 둘 다 호출하지 않는다. 실제로는 사람이 출력 버전을 확인한 뒤 이어지는 `run_pipeline_resume_after_version_confirm`이 `multi_step.run_stage1_migration`(Stage 1)과 `_run_stage2_block`(Stage 2)을 호출한다. `_run_stage2_block`은 `run_pipeline_resume_after_version_confirm`과 HITL 재개 경로 `run_pipeline_resume_stage2` 양쪽에서 공유된다. 전체 파이프라인 그림은 [`docs/architecture.md`](architecture.md) §4·§4.1을 참고.
 
 ## 7. 참고
 
