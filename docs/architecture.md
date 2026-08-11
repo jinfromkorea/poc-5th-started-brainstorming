@@ -1,6 +1,6 @@
 # Maven Stack Upgrade Tool — 아키텍처
 
-- 작성일: 2026-08-07 (2026-08-11 개정: Stage 0 버전 확인 게이트, 작업 취소/삭제, 파일별 diff 뷰어, LLM 모델 설정 반영. 2026-08-12 개정: job 상태 stage1/stage2 분리 + 1단계 인수인계 후 재개, 사내 parent POM 목표 버전 전이, `index.html` 제출 폼/설명 콘텐츠와 `job.html` 진행 상황 뷰 분리 반영)
+- 작성일: 2026-08-07 (2026-08-11 개정: Stage 0 버전 확인 게이트, 작업 취소/삭제, 파일별 diff 뷰어, LLM 모델 설정 반영. 2026-08-12 개정: job 상태 stage1/stage2 분리 + 1단계 인수인계 후 재개, 사내 parent POM 목표 버전 전이, `index.html` 제출 폼/설명 콘텐츠와 `job.html` 진행 상황 뷰 분리, Stage 0가 `work/` 대신 `source/`를 분석하도록 변경 반영)
 - 이 문서는 실제 구현(`backend/`, `frontend/`)을 기준으로 정리한 아키텍처 문서다. 설계 배경/의사결정 근거는 [`docs/superpowers/specs/2026-08-06-oss-dependency-governance-design.md`](superpowers/specs/2026-08-06-oss-dependency-governance-design.md)(이하 "설계 스펙")를 참고한다. 이 문서는 그 스펙이 실제로 어떤 모듈/파일로 구현됐는지를 코드 기준으로 매핑한다.
 
 ## 1. 한 줄 요약
@@ -152,7 +152,7 @@ sequenceDiagram
 
 설계 배경: [`docs/superpowers/specs/2026-08-10-stage0-version-scan-restructure-design.md`](superpowers/specs/2026-08-10-stage0-version-scan-restructure-design.md).
 
-1·2단계 중 하나라도 선택되면, 실제 마이그레이션/패치에 들어가기 전에 항상 이 게이트를 거친다:
+1·2단계 중 하나라도 선택되면, 실제 마이그레이션/패치에 들어가기 전에 항상 이 게이트를 거친다. **아래 1~3번은 전부 `source/`(인입 직후, 아직 손 안 댄 원본)를 대상으로 실행된다** — `work/`는 인입 중에 이미 그 시점의 `source/`를 복사해 baseline 커밋까지 끝낸 뒤라, Stage 0가 `source/`에서 뭘 하든(3번의 취약점 스캔이 내부적으로 돌리는 실제 `mvn install` 포함) `work/`엔 영향이 없다(§5):
 
 1. `mvn effective-pom`으로 현재 버전/스택을 분석(`inventory` 이벤트).
 2. `versioning/artifact_version.compute_stage0_output_version`으로 출력 버전을 자동 제안 — **1단계가 선택됐으면 MAJOR, 아니면 MINOR**를 증가시킨다(스택이 이미 목표와 같아도 마찬가지). 감지된 현재 버전이 `MAJOR.MINOR.PATCH` 형태가 아니면 정규화만 하고 그대로 반환.
@@ -173,7 +173,7 @@ sequenceDiagram
 
 `mvn effective-pom`으로 뽑은 스택 버전(§4.1의 1번)은 상속 체인까지 반영된 최종 병합 결과라, 프로젝트의 루트 `pom.xml`이 사내 공용 parent POM(BOM 겸용, 예: `ace-parent`)을 상속하고 있으면 그 parent가 정의한 값이 이미 녹아 있다. 이 경우 Stage 1이 이 프로젝트 자신의 파일만 아무리 고쳐도 목표 스택에 도달할 수 없다 — parent 자체의 새 버전을 가리키는 것 말고는 방법이 없다.
 
-- **감지**(`ingest/maven_detect.detect_external_parent`): 프로젝트 자신의 원본(effective 아님) `pom.xml`의 `<parent>`가 알려진 공개 parent(`_PUBLIC_PARENT_ALLOWLIST`, 현재는 `spring-boot-starter-parent`만) 목록에 없으면 "사내 parent POM일 수 있다"고 판단한다. `run_pipeline`이 Stage 0의 `inventory` 이벤트(분석 패널)와 `awaiting_version_approval`의 `status` 이벤트(`detected_parent` 필드) 양쪽에 이 결과를 실어 보낸다.
+- **감지**(`ingest/maven_detect.detect_external_parent`): `source/`(Stage 0가 실행되는 곳, 위 참고)의 원본(effective 아님) `pom.xml`의 `<parent>`가 알려진 공개 parent(`_PUBLIC_PARENT_ALLOWLIST`, 현재는 `spring-boot-starter-parent`만) 목록에 없으면 "사내 parent POM일 수 있다"고 판단한다. `run_pipeline`이 Stage 0의 `inventory` 이벤트(분석 패널)와 `awaiting_version_approval`의 `status` 이벤트(`detected_parent` 필드) 양쪽에 이 결과를 실어 보낸다.
 - **입력**: 확인 패널에 "사내 parent POM 목표 버전" 입력창이 조건부로 뜬다(감지됐을 때만). `POST /jobs/{id}/confirm-version`의 `parent_target_version`으로 전달 — 비워두면(기본) 이 프로젝트만 마이그레이션하고 parent는 그대로 둔다. 감지된 현재 parent 버전과 같은 값을 넣으면 409(출력 버전과 동일한 정책).
 - **적용**(Stage 1, `orchestration/multi_step.run_stage1_migration`): `parent_target_version`이 있으면 계획의 맨 앞에 `parent_pom` 스텝을 하나 끼워 넣는다 — OpenRewrite 레시피가 아니라 `mvnrewrite/parent_patch.patch_parent_version`(XML `<parent><version>` 텍스트를 직접 교체하는 mechanical 패치, `mvn versions:update-parent`가 지정한 값보다 높은 버전으로 새는 걸 실측으로 확인해 직접 XML 조작으로 바꿨다)로 처리하지만, 검증/커밋/실패 시 인수인계 가이드는 다른 스텝과 동일한 Stage 1 그래프(§7.2)를 그대로 탄다. 이 스텝이 성공하면 `mvn effective-pom`을 다시 돌려 재분석하고(새 parent 버전이 가져온 스택으로), 그 값으로 나머지 계획(`build_migration_plan`)을 다시 세운다 — 막혔던 지점을 저장해두지 않고, 재분석된 현재 상태가 자연스럽게 이미 끝난 스텝을 계획에서 빼준다(§7.6의 인수인계 후 재개가 재사용하는 것과 같은 패턴).
 - **목표 버전을 안 준 경우**: parent가 감지됐는데도 `parent_target_version`을 비워뒀다면, 1단계가 끝난 뒤 리포트에 "이 프로젝트만으로는 목표에 도달할 수 없습니다" 안내 문구가 남는다(`run_pipeline_resume_after_version_confirm`).
@@ -186,7 +186,7 @@ sequenceDiagram
 - **Maven 감지** ([`maven_detect.py`](../backend/app/ingest/maven_detect.py)): root `pom.xml` 존재 확인 → 없으면 `build.gradle*`/`settings.gradle*` 존재 여부로 Gradle 프로젝트임을 구분해 명시적으로 범위 외 에러. `packaging=pom`이면 `<modules>`를 1단계 깊이까지만 수집(중첩 멀티모듈은 미지원, 참고 저장소 4개가 모두 1단계 구조라 이렇게 정함).
 - **work/ 준비** ([`workspace.materialize_work_from_source`](../backend/app/ingest/workspace.py)): `source/`를 `.git` 제외하고 `work/`로 복사한 뒤 `work/`에서 새로 `git init` + baseline 커밋(`checkpoint/git_repo.git_init_and_baseline_commit`). 원본 Git 히스토리를 상속하지 않고, 이 도구가 만든 변경만 담긴 최소 히스토리를 새로 시작한다.
 
-작업 디렉토리는 `{JOBS_DATA_DIR}/{job_id}/{source,work,output}/`로 분리되며, `source/`는 절대 수정되지 않는다.
+작업 디렉토리는 `{JOBS_DATA_DIR}/{job_id}/{source,work,output}/`로 분리된다. `source/`의 원본 파일 자체는 이 도구가 절대 고치지 않는다 — 다만 Stage 0(§4.1)가 `source/`에서 직접 분석/스캔을 실행하므로, 그 과정에서 생기는 빌드 산출물(`target/` 등, 취약점 스캔이 내부적으로 돌리는 `mvn install`의 부산물)은 `source/` 아래 새로 생길 수 있다. `work/`는 그 이전(ingest 중)에 이미 그 시점의 `source/`를 복사해 baseline 커밋까지 마친 뒤라 영향받지 않고, ingest 이후로는 이 도구의 다른 어떤 코드도 `source/`를 다시 읽지 않으므로 실질적인 문제는 없다.
 
 ## 6. 체크포인트/롤백 (`checkpoint/git_repo.py`)
 
