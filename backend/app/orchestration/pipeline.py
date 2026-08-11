@@ -32,7 +32,7 @@ from typing import Literal
 
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.checkpoint.git_repo import current_head, diff_since, resolve_ingest_baseline
+from app.checkpoint.git_repo import commit_checkpoint, current_head, diff_since, resolve_ingest_baseline
 from app.config import Settings
 from app.handoff.guide_builder import build_handoff_guide
 from app.ingest.errors import IngestError
@@ -523,7 +523,15 @@ async def run_pipeline_resume_stage1_after_handoff(
             await emit("status", {"status": "stage1_needs_handoff"})
             return
 
-        baseline = current_head(work_dir, settings)
+        # Commit the human's own fix as its own checkpoint -- without this it
+        # sits uncommitted in the working tree, and if the very next Stage 1
+        # step then fails, multi_step._run_one_step's rollback (reset to
+        # current HEAD) would silently discard the human's fix along with
+        # the AI's failed attempt. Confirmed live against job #44: an
+        # earlier version of this function used current_head() here instead
+        # and the manual fix only survived because the next step happened to
+        # succeed on its first try.
+        baseline = commit_checkpoint(work_dir, settings, "checkpoint: 인수인계 후 수동 수정 확인됨")
 
         effective_pom_path = output_dir / "effective-pom.xml"
         await mvn_effective_pom(

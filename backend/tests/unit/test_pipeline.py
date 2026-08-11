@@ -13,7 +13,7 @@ import subprocess
 
 import pytest
 
-from app.checkpoint.git_repo import commit_checkpoint, git_init_and_baseline_commit, reset_to_checkpoint
+from app.checkpoint.git_repo import commit_checkpoint, current_head, git_init_and_baseline_commit, reset_to_checkpoint
 from app.config import Settings
 from app.ingest.maven_detect import MavenDetectionResult
 from app.ingest.workspace import GitSourceSpec, IngestResult, WorkspacePaths, ZipSourceSpec
@@ -78,7 +78,7 @@ def _commit_subjects(work_dir) -> str:
     git_repo.py's own helpers, so this check doesn't share any code path
     with what it's verifying."""
     return subprocess.run(
-        ["git", "log", "--format=%s"], cwd=work_dir, capture_output=True, text=True, check=True
+        ["git", "log", "--format=%s"], cwd=work_dir, capture_output=True, text=True, encoding="utf-8", check=True
     ).stdout
 
 
@@ -849,6 +849,53 @@ async def test_resume_stage1_after_handoff_verify_succeeds_completes_migration(m
         assert "재개 후" in job.report_markdown
 
     assert not stale_guide.exists()
+
+
+async def test_resume_stage1_after_handoff_commits_manual_fix_as_its_own_checkpoint(monkeypatch, settings, db, job_paths):
+    """Regression test found via live verification against job #44: an
+    earlier version of this function read current_head() instead of
+    committing after verify passed, so a human's manual fix sat uncommitted
+    -- if the very next Stage 1 step had then failed, multi_step's rollback
+    (reset to current HEAD) would have silently discarded that fix along
+    with the AI's failed attempt. It only "worked" in the live run because
+    the next step happened to succeed on its first try."""
+    job_id = job_paths.root.name
+    settings.jobs_data_dir = str(job_paths.root.parent)
+    git_init_and_baseline_commit(job_paths.work, settings)
+    _create_stage1_needs_handoff_job(db, job_id)
+
+    # Simulates the human's manual fix: an uncommitted change sitting in
+    # work/ when the resume endpoint is called.
+    (job_paths.work / "pom.xml").write_text("<project><!-- manually fixed --></project>")
+
+    async def passing_verify(work_dir, settings_, on_log=None):
+        return True, "BUILD SUCCESS"
+
+    received_baseline = {}
+
+    async def fake_stage1_records_baseline(job_id, work_dir, detected, baseline, settings_, parent_target_version=None, on_log=None):
+        received_baseline["sha"] = baseline
+        return MigrationRunResult(
+            plan=MigrationPlan(steps=[]), outcomes=[], status="no_gap", final_diff="", report="# 재개 완료", handoff_guide=None
+        )
+
+    monkeypatch.setattr("app.orchestration.pipeline.verify_after_manual_fix", passing_verify)
+    monkeypatch.setattr("app.orchestration.pipeline.mvn_effective_pom", _async_noop_writes_file)
+    monkeypatch.setattr(
+        "app.orchestration.pipeline.extract_versions",
+        lambda path: DetectedVersions(java_version="21", spring_boot_version="4.1.0", spring_cloud_version=None, spring_ai_version=None),
+    )
+    monkeypatch.setattr("app.orchestration.pipeline.run_stage1_migration", fake_stage1_records_baseline)
+    monkeypatch.setattr("app.orchestration.pipeline.diff_since", lambda work_dir, settings_, baseline: "")
+
+    await run_pipeline_resume_stage1_after_handoff(job_id=job_id, settings=settings, session_factory=db)
+
+    subjects = _commit_subjects(job_paths.work)
+    assert "인수인계 후 수동 수정 확인됨" in subjects
+    # The working tree must be clean right after verify passes -- the manual
+    # fix is committed on its own, not left riding along uncommitted into
+    # whatever run_stage1_migration does next.
+    assert current_head(job_paths.work, settings) == received_baseline["sha"]
 
 
 async def test_resume_stage1_after_handoff_verify_succeeds_but_next_step_blocks(monkeypatch, settings, db, job_paths):
