@@ -106,6 +106,7 @@ python -m http.server 5500
 - [ ] 검증(`mvn test-compile`) 통과 + 남은 계획이 없거나 전부 성공 → 최종 `success`로 끝나고, 결과물의 handoff 가이드 버튼 목록에서 1차 시도 때 만들어졌던 가이드가 사라지는지
 - [ ] 검증 실패(일부러 컴파일 에러를 남겨둔 채 클릭) → 상태가 다시 `stage1_needs_handoff`로 돌아가고, handoff 가이드 내용이 최신 실패 로그로 갱신되며, 버튼이 다시 나타나 반복 클릭할 수 있는지
 - [ ] `run_stage1=true, run_stage2=true`로 실행해 1단계가 막혔다가(`awaiting_approval`) `/proceed`로 2단계까지 진행되어 `stage1_needs_handoff`로 끝난 job에서도 버튼이 정상적으로 뜨고 동작하는지(2단계를 다시 건드리지 않는지)
+- [ ] 재개를 2번 이상 반복해(즉 이력에 `stage1_needs_handoff`가 여러 번 나온 뒤 마지막에 `success`로 끝난 job에서) `job.html?job={id}`를 새로고침하면 상태 배지가 중간의 `stage1_needs_handoff`가 아니라 최종 `success`로 정확히 표시되는지 — SSE 재생 이력 중간에 터미널처럼 보이는 상태가 여러 번 나와도 끝까지 재생되는지 확인하는 회귀 테스트
 
 ### 이력 목록 (`history.html`)
 

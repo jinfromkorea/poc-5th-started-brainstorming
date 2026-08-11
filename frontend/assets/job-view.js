@@ -450,6 +450,7 @@ function connectSSE(jobId) {
   const query = token ? `?api_token=${encodeURIComponent(token)}` : "";
   const es = new EventSource(apiUrl(`/jobs/${jobId}/events${query}`));
   currentEventSource = es;
+  let lastKnownStatus = null;
 
   es.addEventListener("log", (ev) => {
     const data = JSON.parse(ev.data);
@@ -499,9 +500,9 @@ function connectSSE(jobId) {
     } else {
       resumeStage1Btn.classList.add("hidden");
     }
+    lastKnownStatus = data.status;
     if (TERMINAL_STATUSES.has(data.status)) {
       stopBtn.classList.add("hidden");
-      es.close();
       loadArtifacts(jobId);
     } else {
       showStopButton(jobId);
@@ -520,9 +521,22 @@ function connectSSE(jobId) {
   });
 
   es.onerror = () => {
-    // EventSource auto-retries on network-level errors unless explicitly
-    // closed; we only close it above once a terminal "status" event has
-    // been seen, so a transient reconnect here is expected behavior.
+    // A job's history can now contain a "terminal-looking" status
+    // mid-timeline, not just at the very end -- stage1_needs_handoff is
+    // resumable (POST /jobs/{id}/resume-stage1), so a replay can legitimately
+    // go ...stage1_needs_handoff -> running -> success. Closing eagerly the
+    // moment a terminal status event is *seen* (rather than once the stream
+    // actually ends) used to cut the connection after the first
+    // stage1_needs_handoff in a job's history, silently dropping every event
+    // replayed after it (including the real final status). So the decision
+    // to stop auto-reconnecting is deferred to here, onerror, which only
+    // fires once the connection actually drops -- by then every replayed
+    // event (the true last one included) has already been dispatched above,
+    // so lastKnownStatus reflects reality.
+    if (lastKnownStatus && TERMINAL_STATUSES.has(lastKnownStatus)) {
+      es.close();
+      return;
+    }
     appendLog("[연결 재시도 중...]");
   };
 }
