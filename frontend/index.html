@@ -56,7 +56,12 @@
 
     <section id="stage0-overview" class="card">
       <h2>Stage 0 — 버전 확인 + 베이스라인 스캔</h2>
-      <p class="field-hint">1·2단계 중 하나라도 선택하면, 실제 마이그레이션/패치에 들어가기 전에 항상 이 게이트를 거칩니다. 현재 버전/스택을 분석하고 출력 버전을 자동 제안한 뒤, 사람이 확인해야 다음 단계로 넘어갑니다. 아래 4단계는 전부 인입 직후의 원본(<code>source/</code>)을 대상으로 실행됩니다 — 실제 변경은 사람이 확인한 뒤 1단계부터 별도의 작업 사본(<code>work/</code>)에서 시작됩니다.</p>
+      <p class="field-hint">
+        1·2단계 중 하나라도 선택하면, 실제 마이그레이션/패치에 들어가기 전에 항상 이 게이트를 거칩니다. <br/>
+        현재 버전/스택을 분석하고 출력 버전을 자동 제안한 뒤, 사람이 확인해야 다음 단계로 넘어갑니다. <br/>
+        아래 4단계는 전부 인입 직후의 원본(<code>source/</code>)을 대상으로 실행됩니다 <br/>
+        — 실제 변경은 사람이 확인한 뒤 1단계부터 별도의 작업 사본(<code>work/</code>)에서 시작됩니다.
+      </p>
       <div class="langgraph-diagram">
         <svg viewBox="0 0 900 200" role="img" aria-label="Stage 0: START에서 스택 분석(이때 사내 parent POM 감지도 함께 일어남), 출력 버전 제안, 취약점 스캔을 순서대로 거친 뒤 사람 확인을 기다렸다가 1·2단계로 넘어간다">
           <defs>
@@ -105,7 +110,10 @@
 
     <section id="stage1-overview" class="card">
       <h2>Stage 1 — 스택 마이그레이션</h2>
-      <p class="field-hint">선택한 목표 스택까지의 계획을 스텝별로 세운 뒤, 각 스텝을 "적용 → 검증 → (실패 시) AI 수정 → 재검증"을 자동으로 반복하는 자가검증 루프로 실행합니다. 재시도를 다 써도 안 되면 인수인계 가이드를 남기고 멈춥니다.</p>
+      <p class="field-hint">
+        선택한 목표 스택까지의 계획을 스텝별로 세운 뒤, 각 스텝을 "적용 → 검증 → (실패 시) AI 수정 → 재검증"을 자동으로 반복하는 자가검증 루프로 실행합니다. <br/>
+        재시도를 다 써도 안 되면 인수인계 가이드를 남기고 멈춥니다.
+      </p>
       <div class="langgraph-diagram">
         <svg viewBox="0 0 900 500" role="img" aria-label="Stage 1 LangGraph: START에서 plan을 거쳐 apply/verify/ai_fix를 오가며 성공 시 END, 재시도 소진 시 handoff를 거쳐 END로 간다">
           <defs>
@@ -118,7 +126,6 @@
             <line x1="115" y1="140" x2="173" y2="140" />
             <line x1="287" y1="140" x2="343" y2="140" stroke-dasharray="4 3" />
             <path d="M230,162 C 300,220 420,260 478,296" stroke-dasharray="4 3" />
-            <path d="M230,118 C 230,20 830,20 830,122" stroke-dasharray="4 3" />
             <line x1="455" y1="140" x2="543" y2="140" stroke-dasharray="4 3" />
             <path d="M400,162 C 430,220 460,260 486,296" stroke-dasharray="4 3" />
             <line x1="657" y1="140" x2="783" y2="140" stroke-dasharray="4 3" />
@@ -130,9 +137,8 @@
           </g>
 
           <g font-size="12" fill="var(--text-muted)" text-anchor="middle">
-            <g><rect x="180" y="122" width="86" height="16" fill="var(--bg-card)" /><text x="223" y="134">recipe 있음</text></g>
-            <g><rect x="300" y="222" width="96" height="16" fill="var(--bg-card)" /><text x="348" y="234">recipe 없음</text></g>
-            <g><rect x="465" y="30" width="130" height="16" fill="var(--bg-card)" /><text x="530" y="42">이미 목표 버전(스킵)</text></g>
+            <g><rect x="150" y="122" width="146" height="16" fill="var(--bg-card)" /><text x="223" y="134">recipe 있음 · parent 스텝</text></g>
+            <g><rect x="263" y="222" width="170" height="16" fill="var(--bg-card)" /><text x="348" y="234">recipe 없음 (parent 제외)</text></g>
             <g><rect x="460" y="122" width="76" height="16" fill="var(--bg-card)" /><text x="498" y="134">성공</text></g>
             <g><rect x="368" y="222" width="76" height="16" fill="var(--bg-card)" /><text x="406" y="234">적용 실패</text></g>
             <g><rect x="678" y="122" width="76" height="16" fill="var(--bg-card)" /><text x="716" y="134">성공</text></g>

@@ -92,7 +92,6 @@ function injectLangGraphHelp() {
             <line x1="115" y1="140" x2="173" y2="140" />
             <line x1="287" y1="140" x2="343" y2="140" stroke-dasharray="4 3" />
             <path d="M230,162 C 300,220 420,260 478,296" stroke-dasharray="4 3" />
-            <path d="M230,118 C 230,20 830,20 830,122" stroke-dasharray="4 3" />
             <line x1="455" y1="140" x2="543" y2="140" stroke-dasharray="4 3" />
             <path d="M400,162 C 430,220 460,260 486,296" stroke-dasharray="4 3" />
             <line x1="657" y1="140" x2="783" y2="140" stroke-dasharray="4 3" />
@@ -104,9 +103,8 @@ function injectLangGraphHelp() {
           </g>
 
           <g font-size="12" fill="var(--text-muted)" text-anchor="middle">
-            <g><rect x="180" y="122" width="86" height="16" fill="var(--bg-card)" /><text x="223" y="134">recipe 있음</text></g>
-            <g><rect x="300" y="222" width="96" height="16" fill="var(--bg-card)" /><text x="348" y="234">recipe 없음</text></g>
-            <g><rect x="465" y="30" width="130" height="16" fill="var(--bg-card)" /><text x="530" y="42">이미 목표 버전(스킵)</text></g>
+            <g><rect x="150" y="122" width="146" height="16" fill="var(--bg-card)" /><text x="223" y="134">recipe 있음 · parent 스텝</text></g>
+            <g><rect x="263" y="222" width="170" height="16" fill="var(--bg-card)" /><text x="348" y="234">recipe 없음 (parent 제외)</text></g>
             <g><rect x="460" y="122" width="76" height="16" fill="var(--bg-card)" /><text x="498" y="134">성공</text></g>
             <g><rect x="368" y="222" width="76" height="16" fill="var(--bg-card)" /><text x="406" y="234">적용 실패</text></g>
             <g><rect x="678" y="122" width="76" height="16" fill="var(--bg-card)" /><text x="716" y="134">성공</text></g>
