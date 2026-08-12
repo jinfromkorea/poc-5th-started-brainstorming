@@ -144,8 +144,10 @@ header h1 {
 .langgraph-diagram svg {
   width: 100%;
   min-width: 640px;
+  max-width: 900px;
   height: auto;
   display: block;
+  margin: 0 auto;
 }
 
 .help-btn {
