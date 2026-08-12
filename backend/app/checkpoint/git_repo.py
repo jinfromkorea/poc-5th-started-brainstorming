@@ -69,7 +69,7 @@ def _run_git(work_dir: Path, args: list[str], env: dict[str, str]) -> subprocess
     # _readerthread). errors="replace" so a still-unexpected byte degrades
     # to a garbled character instead of crashing the whole call.
     executable = resolve_executable("git")
-    logger.info("실행: %s (cwd=%s)", " ".join([executable, *args]), work_dir)
+    logger.info("실행: %s", " ".join([executable, *args]))
     proc = subprocess.run(
         [executable, *args],
         cwd=work_dir,

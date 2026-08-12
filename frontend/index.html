@@ -63,7 +63,7 @@
         — 실제 변경은 사람이 확인한 뒤 1단계부터 별도의 작업 사본(<code>work/</code>)에서 시작됩니다.
       </p>
       <div class="langgraph-diagram">
-        <svg viewBox="0 0 900 200" role="img" aria-label="Stage 0: START에서 스택 분석(이때 사내 parent POM 감지도 함께 일어남), 출력 버전 제안, 취약점 스캔을 순서대로 거친 뒤 사람 확인을 기다렸다가 1·2단계로 넘어간다">
+        <svg viewBox="0 20 900 180" role="img" aria-label="Stage 0: START에서 스택 분석(이때 사내 parent POM 감지도 함께 일어남), 출력 버전 제안, 취약점 스캔을 순서대로 거친 뒤 사람 확인을 기다렸다가 1·2단계로 넘어간다">
           <defs>
             <marker id="lg0-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)" />
@@ -71,35 +71,35 @@
           </defs>
 
           <g fill="none" stroke="var(--text-muted)" stroke-width="1.5" marker-end="url(#lg0-arrow)">
-            <line x1="80" y1="94" x2="100" y2="94" />
-            <line x1="250" y1="94" x2="270" y2="94" />
-            <line x1="400" y1="94" x2="420" y2="94" />
-            <line x1="570" y1="94" x2="590" y2="94" />
-            <line x1="730" y1="94" x2="800" y2="94" stroke-dasharray="4 3" />
+            <line x1="80" y1="94" x2="132" y2="94" />
+            <line x1="246" y1="94" x2="298" y2="94" />
+            <line x1="394" y1="94" x2="446" y2="94" />
+            <line x1="560" y1="94" x2="612" y2="94" />
+            <line x1="714" y1="94" x2="800" y2="94" stroke-dasharray="4 3" />
           </g>
 
           <g font-size="11" fill="var(--text-muted)" text-anchor="middle">
-            <rect x="722" y="70" width="76" height="16" fill="var(--bg-card)" />
-            <text x="760" y="82">사람 확인 후</text>
-            <rect x="112" y="40" width="126" height="16" fill="var(--bg-card)" />
-            <text x="175" y="52">(+ 사내 parent 감지)</text>
+            <rect x="719" y="70" width="76" height="16" fill="var(--bg-card)" />
+            <text x="757" y="82">사람 확인 후</text>
+            <rect x="126" y="40" width="126" height="16" fill="var(--bg-card)" />
+            <text x="189" y="52">(+ 사내 parent 감지)</text>
           </g>
 
           <g font-size="13" font-weight="600" text-anchor="middle">
             <rect x="10" y="76" width="70" height="36" rx="18" fill="var(--accent)" />
             <text x="45" y="98" fill="var(--accent-contrast)">START</text>
 
-            <rect x="100" y="66" width="150" height="56" rx="8" fill="var(--bg-sunken)" stroke="var(--border)" />
-            <text fill="var(--text)"><tspan x="175" y="90">스택 분석</tspan><tspan x="175" y="108" font-weight="400" font-size="11">(effective-pom)</tspan></text>
+            <rect x="132" y="72" width="114" height="44" rx="8" fill="var(--bg-sunken)" stroke="var(--border)" />
+            <text fill="var(--text)"><tspan x="189" y="90">스택 분석</tspan><tspan x="189" y="106" font-weight="400" font-size="11">(effective-pom)</tspan></text>
 
-            <rect x="270" y="66" width="130" height="56" rx="8" fill="var(--bg-sunken)" stroke="var(--border)" />
-            <text fill="var(--text)"><tspan x="335" y="90">출력 버전</tspan><tspan x="335" y="108" font-weight="400" font-size="11">자동 제안</tspan></text>
+            <rect x="298" y="72" width="96" height="44" rx="8" fill="var(--bg-sunken)" stroke="var(--border)" />
+            <text fill="var(--text)"><tspan x="346" y="90">출력 버전</tspan><tspan x="346" y="106" font-weight="400" font-size="11">자동 제안</tspan></text>
 
-            <rect x="420" y="66" width="150" height="56" rx="8" fill="var(--bg-sunken)" stroke="var(--border)" />
-            <text fill="var(--text)"><tspan x="495" y="90">취약점 스캔</tspan><tspan x="495" y="108" font-weight="400" font-size="11">(마이그레이션 전)</tspan></text>
+            <rect x="446" y="72" width="114" height="44" rx="8" fill="var(--bg-sunken)" stroke="var(--border)" />
+            <text fill="var(--text)"><tspan x="503" y="90">취약점 스캔</tspan><tspan x="503" y="106" font-weight="400" font-size="11">(마이그레이션 전)</tspan></text>
 
-            <rect x="590" y="66" width="140" height="56" rx="8" fill="var(--warning-bg)" stroke="var(--warning)" />
-            <text fill="var(--warning)"><tspan x="660" y="90">사람 확인</tspan><tspan x="660" y="108" font-weight="400" font-size="11">대기</tspan></text>
+            <rect x="612" y="72" width="102" height="44" rx="8" fill="var(--warning-bg)" stroke="var(--warning)" />
+            <text fill="var(--warning)"><tspan x="663" y="90">사람 확인</tspan><tspan x="663" y="106" font-weight="400" font-size="11">대기</tspan></text>
 
             <rect x="800" y="76" width="90" height="36" rx="18" fill="var(--accent)" />
             <text x="845" y="98" fill="var(--accent-contrast)" font-size="12">1·2단계로</text>
@@ -115,7 +115,7 @@
         재시도를 다 써도 안 되면 인수인계 가이드를 남기고 멈춥니다.
       </p>
       <div class="langgraph-diagram">
-        <svg viewBox="0 0 900 500" role="img" aria-label="Stage 1 LangGraph: START에서 plan을 거쳐 apply/verify/ai_fix를 오가며 성공 시 END, 재시도 소진 시 handoff를 거쳐 END로 간다">
+        <svg viewBox="0 75 900 425" role="img" aria-label="Stage 1 LangGraph: START에서 plan을 거쳐 apply/verify/ai_fix를 오가며 성공 시 END, 재시도 소진 시 handoff를 거쳐 END로 간다">
           <defs>
             <marker id="lg1-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)" />
@@ -123,14 +123,14 @@
           </defs>
 
           <g fill="none" stroke="var(--text-muted)" stroke-width="1.5" marker-end="url(#lg1-arrow)">
-            <line x1="115" y1="140" x2="173" y2="140" />
+            <line x1="105" y1="140" x2="173" y2="140" />
             <line x1="287" y1="140" x2="343" y2="140" stroke-dasharray="4 3" />
             <path d="M230,162 C 300,220 420,260 478,296" stroke-dasharray="4 3" />
             <line x1="455" y1="140" x2="543" y2="140" stroke-dasharray="4 3" />
             <path d="M400,162 C 430,220 460,260 486,296" stroke-dasharray="4 3" />
-            <line x1="657" y1="140" x2="783" y2="140" stroke-dasharray="4 3" />
+            <line x1="657" y1="140" x2="793" y2="140" stroke-dasharray="4 3" />
             <path d="M608,162 C 615,220 590,260 560,296" stroke-dasharray="4 3" />
-            <path d="M470,298 C 500,240 550,180 583,164" stroke-dasharray="4 3" />
+            <path d="M553,298 C 500,255 545,195 583,164" stroke-dasharray="4 3" />
             <path d="M617,162 C 660,260 670,340 655,416" stroke-dasharray="4 3" />
             <path d="M553,325 C 585,360 595,385 601,415" stroke-dasharray="4 3" />
             <path d="M650,418 C 760,400 830,300 830,158" />
@@ -140,7 +140,7 @@
             <g><rect x="187" y="95" width="146" height="16" fill="var(--bg-card)" /><text x="260" y="107">recipe 있음 · parent 스텝</text></g>
             <g><rect x="175" y="195" width="170" height="16" fill="var(--bg-card)" /><text x="260" y="207">recipe 없음 (parent 제외)</text></g>
             <g><rect x="460" y="122" width="76" height="16" fill="var(--bg-card)" /><text x="498" y="134">성공</text></g>
-            <g><rect x="368" y="222" width="76" height="16" fill="var(--bg-card)" /><text x="406" y="234">적용 실패</text></g>
+            <g><rect x="402" y="222" width="76" height="16" fill="var(--bg-card)" /><text x="440" y="234">적용 실패</text></g>
             <g><rect x="678" y="122" width="76" height="16" fill="var(--bg-card)" /><text x="716" y="134">성공</text></g>
             <g><rect x="470" y="255" width="104" height="16" fill="var(--bg-card)" /><text x="522" y="267">파일수 이하</text></g>
             <g><rect x="560" y="200" width="90" height="16" fill="var(--bg-card)" /><text x="605" y="212">재시도 가능</text></g>
@@ -149,7 +149,7 @@
           </g>
 
           <g font-size="13" font-weight="600" text-anchor="middle">
-            <rect x="25" y="122" width="90" height="36" rx="18" fill="var(--accent)" />
+            <rect x="35" y="122" width="70" height="36" rx="18" fill="var(--accent)" />
             <text x="70" y="145" fill="var(--accent-contrast)">START</text>
 
             <rect x="175" y="118" width="110" height="44" rx="8" fill="var(--bg-sunken)" stroke="var(--border)" />
@@ -161,7 +161,7 @@
             <rect x="545" y="118" width="110" height="44" rx="8" fill="var(--bg-sunken)" stroke="var(--border)" />
             <text x="600" y="145" fill="var(--text)">verify</text>
 
-            <rect x="785" y="122" width="90" height="36" rx="18" fill="var(--accent)" />
+            <rect x="795" y="122" width="70" height="36" rx="18" fill="var(--accent)" />
             <text x="830" y="145" fill="var(--accent-contrast)">END</text>
 
             <rect x="445" y="298" width="110" height="44" rx="8" fill="var(--bg-sunken)" stroke="var(--border)" />
@@ -176,9 +176,11 @@
 
     <section id="stage2-overview" class="card">
       <h2>Stage 2 — 개별 CVE 패치 (옵션)</h2>
-      <p class="field-hint">전이 의존성까지 포함해 스캔한 CVE 목록을 하나씩, Stage 1과 같은 모양의 자가검증 루프로 패치합니다. CVE들은 서로 독립적이라 하나가 막혀도 나머지는 계속 시도합니다.</p>
+      <p class="field-hint">
+        전이 의존성까지 포함해 스캔한 CVE 목록을 하나씩, Stage 1과 같은 모양의 자가검증 루프로 패치합니다. <br/>
+        CVE들은 서로 독립적이라 하나가 막혀도 나머지는 계속 시도합니다.</p>
       <div class="langgraph-diagram">
-        <svg viewBox="0 0 900 500" role="img" aria-label="Stage 2 LangGraph: START에서 apply를 거쳐 verify로, 실패 시 ai_fix와 오가다가 재시도 소진 시 handoff를 거쳐 END로 간다">
+        <svg viewBox="0 75 900 425" role="img" aria-label="Stage 2 LangGraph: START에서 apply를 거쳐 verify로, 실패 시 ai_fix와 오가다가 재시도 소진 시 handoff를 거쳐 END로 간다">
           <defs>
             <marker id="lg2-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)" />
@@ -186,26 +188,26 @@
           </defs>
 
           <g fill="none" stroke="var(--text-muted)" stroke-width="1.5" marker-end="url(#lg2-arrow)">
-            <line x1="115" y1="140" x2="173" y2="140" />
+            <line x1="105" y1="140" x2="173" y2="140" />
             <line x1="287" y1="140" x2="343" y2="140" />
-            <line x1="455" y1="140" x2="543" y2="140" stroke-dasharray="4 3" />
-            <path d="M608,162 C 615,220 590,260 560,296" stroke-dasharray="4 3" />
-            <path d="M470,298 C 500,240 550,180 583,164" stroke-dasharray="4 3" />
-            <path d="M617,162 C 660,260 670,340 655,416" stroke-dasharray="4 3" />
+            <line x1="457" y1="140" x2="793" y2="140" stroke-dasharray="4 3" />
+            <path d="M410,162 C 415,205 520,260 475,298" stroke-dasharray="4 3" />
+            <path d="M460,298 C 370,253 355,207 380,162" stroke-dasharray="4 3" />
+            <path d="M420,162 C 440,200 700,370 655,416" stroke-dasharray="4 3" />
             <path d="M553,325 C 585,360 595,385 601,415" stroke-dasharray="4 3" />
             <path d="M650,418 C 760,400 830,300 830,158" />
           </g>
 
           <g font-size="12" fill="var(--text-muted)" text-anchor="middle">
             <g><rect x="656" y="122" width="120" height="16" fill="var(--bg-card)" /><text x="716" y="134">mvn verify 성공</text></g>
-            <g><rect x="470" y="255" width="104" height="16" fill="var(--bg-card)" /><text x="522" y="267">파일수 이하</text></g>
-            <g><rect x="560" y="200" width="90" height="16" fill="var(--bg-card)" /><text x="605" y="212">재시도 가능</text></g>
-            <g><rect x="600" y="290" width="104" height="16" fill="var(--bg-card)" /><text x="652" y="302">재시도 소진</text></g>
+            <g><rect x="318" y="177" width="104" height="16" fill="var(--bg-card)" /><text x="370" y="189">파일수 이하</text></g>
+            <g><rect x="416" y="220" width="90" height="16" fill="var(--bg-card)" /><text x="461" y="232">재시도 가능</text></g>
+            <g><rect x="510" y="274" width="104" height="16" fill="var(--bg-card)" /><text x="562" y="286">재시도 소진</text></g>
             <g><rect x="555" y="365" width="90" height="16" fill="var(--bg-card)" /><text x="600" y="377">파일수 초과</text></g>
           </g>
 
           <g font-size="13" font-weight="600" text-anchor="middle">
-            <rect x="25" y="122" width="90" height="36" rx="18" fill="var(--accent)" />
+            <rect x="35" y="122" width="70" height="36" rx="18" fill="var(--accent)" />
             <text x="70" y="145" fill="var(--accent-contrast)">START</text>
 
             <rect x="175" y="118" width="110" height="44" rx="8" fill="var(--bg-sunken)" stroke="var(--border)" />
@@ -214,7 +216,7 @@
             <rect x="345" y="118" width="110" height="44" rx="8" fill="var(--bg-sunken)" stroke="var(--border)" />
             <text x="400" y="145" fill="var(--text)">verify</text>
 
-            <rect x="785" y="122" width="90" height="36" rx="18" fill="var(--accent)" />
+            <rect x="795" y="122" width="70" height="36" rx="18" fill="var(--accent)" />
             <text x="830" y="145" fill="var(--accent-contrast)">END</text>
 
             <rect x="445" y="298" width="110" height="44" rx="8" fill="var(--bg-sunken)" stroke="var(--border)" />

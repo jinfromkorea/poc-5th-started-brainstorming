@@ -117,7 +117,7 @@ async def _finalize_cancelled(job_id: str, settings: Settings, session_factory: 
             return
 
     await set_job_status(session_factory, job_id, "cancelled")
-    emit, _log = make_emit_log(session_factory, job_id)
+    emit, _ = make_emit_log(session_factory, job_id)
     await emit("status", {"status": "cancelled"})
 
     output_dir = settings.jobs_dir / job_id / "output"
@@ -195,7 +195,6 @@ async def run_pipeline(
         await log("POM 분석 시작")
         ingest_result = ingest(job_id, spec, settings)
         source_dir = ingest_result.paths.source
-        work_dir = ingest_result.paths.work
         output_dir = ingest_result.paths.output
         baseline = ingest_result.baseline_commit
         # Raw (unfiltered) <parent> coordinates -- unlike detect_external_parent
@@ -207,9 +206,8 @@ async def run_pipeline(
         await log(f"모듈 {len(ingest_result.detection.modules)}개, parent={parent_label}, baseline={baseline[:12]}")
 
         if not (run_stage1 or run_stage2):
-            await log("결과물 생성 중...")
-            diff_text = diff_since(work_dir, settings, baseline)
-            (output_dir / "patch.diff").write_text(diff_text, encoding="utf-8")
+            await log("1·2단계 모두 선택되지 않아 변경 사항 없이 종료")
+            (output_dir / "patch.diff").write_text("", encoding="utf-8")
             (output_dir / "report.md").write_text("변경 사항 없음.", encoding="utf-8")
             await set_job_status(session_factory, job_id, "success", report_markdown="변경 사항 없음.")
             await emit("status", {"status": "success"})

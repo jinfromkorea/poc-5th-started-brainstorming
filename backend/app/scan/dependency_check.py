@@ -91,6 +91,4 @@ async def run_dependency_check_update_only(
     ]
     if settings.nvd_api_key:
         args.append(f"-DnvdApiKey={settings.nvd_api_key}")
-    return await run_subprocess(
-        args, settings.jobs_dir, settings, timeout_seconds=NVD_UPDATE_TIMEOUT_SECONDS, log_path=log_path, on_line=on_line
-    )
+    return await run_subprocess(args, settings.jobs_dir, settings, timeout_seconds=NVD_UPDATE_TIMEOUT_SECONDS, log_path=log_path, on_line=on_line)

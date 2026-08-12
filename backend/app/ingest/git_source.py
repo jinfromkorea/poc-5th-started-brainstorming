@@ -29,7 +29,7 @@ def clone_git(url: str, ref: str | None, dest_dir: Path, settings: Settings, log
         cmd += ["--branch", ref]
     cmd += [url, str(dest_dir)]
 
-    logger.info("실행: %s (cwd=%s)", " ".join(cmd), dest_dir.parent)
+    logger.info("실행: %s", " ".join(cmd))
     started_at = time.monotonic()
 
     try:
@@ -53,8 +53,8 @@ def clone_git(url: str, ref: str | None, dest_dir: Path, settings: Settings, log
         log_path.write_text((proc.stdout or "") + (proc.stderr or ""), encoding="utf-8")
 
     if proc.returncode != 0:
-        logger.warning("종료: %s (exit=%s, %.1fs)", " ".join(cmd), proc.returncode, elapsed)
+        logger.warning("종료: exit=%s, %.1fs", proc.returncode, elapsed)
         raise GitCloneError(f"git clone failed for {url!r} (ref={ref!r}): {proc.stderr.strip()}")
 
-    logger.info("종료: %s (exit=0, %.1fs)", " ".join(cmd), elapsed)
+    logger.info("종료: exit=0, %.1fs", elapsed)
     return dest_dir

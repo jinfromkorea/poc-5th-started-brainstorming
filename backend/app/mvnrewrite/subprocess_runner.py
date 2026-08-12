@@ -69,7 +69,7 @@ async def run_subprocess(
     args = with_public_mirror(args, settings)
     executable = resolve_executable(args[0])
     command_display = " ".join([executable, *args[1:]])
-    logger.info("실행: %s (cwd=%s)", command_display, cwd)
+    logger.info("실행(%s): %s", args[0], command_display)
     started_at = time.monotonic()
 
     proc = await asyncio.create_subprocess_exec(
@@ -132,6 +132,6 @@ async def run_subprocess(
             log_file.close()
 
     elapsed = time.monotonic() - started_at
-    logger.info("종료: %s (exit=%s, %.1fs)", command_display, returncode, elapsed)
+    logger.info("종료(%s): exit=%s, %.1fs", args[0], returncode, elapsed)
 
     return SubprocessResult(returncode=returncode, output="\n".join(lines), log_path=log_path)

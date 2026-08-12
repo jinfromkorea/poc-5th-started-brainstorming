@@ -81,7 +81,7 @@ function injectLangGraphHelp() {
 
       <h3>Stage 1 — 마이그레이션 스텝 1개</h3>
       <div class="langgraph-diagram">
-        <svg viewBox="0 0 900 500" role="img" aria-label="Stage 1 LangGraph: START에서 plan을 거쳐 apply/verify/ai_fix를 오가며 성공 시 END, 재시도 소진 시 handoff를 거쳐 END로 간다">
+        <svg viewBox="0 75 900 425" role="img" aria-label="Stage 1 LangGraph: START에서 plan을 거쳐 apply/verify/ai_fix를 오가며 성공 시 END, 재시도 소진 시 handoff를 거쳐 END로 간다">
           <defs>
             <marker id="lg1-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)" />
@@ -89,14 +89,14 @@ function injectLangGraphHelp() {
           </defs>
 
           <g fill="none" stroke="var(--text-muted)" stroke-width="1.5" marker-end="url(#lg1-arrow)">
-            <line x1="115" y1="140" x2="173" y2="140" />
+            <line x1="105" y1="140" x2="173" y2="140" />
             <line x1="287" y1="140" x2="343" y2="140" stroke-dasharray="4 3" />
             <path d="M230,162 C 300,220 420,260 478,296" stroke-dasharray="4 3" />
             <line x1="455" y1="140" x2="543" y2="140" stroke-dasharray="4 3" />
             <path d="M400,162 C 430,220 460,260 486,296" stroke-dasharray="4 3" />
-            <line x1="657" y1="140" x2="783" y2="140" stroke-dasharray="4 3" />
+            <line x1="657" y1="140" x2="793" y2="140" stroke-dasharray="4 3" />
             <path d="M608,162 C 615,220 590,260 560,296" stroke-dasharray="4 3" />
-            <path d="M470,298 C 500,240 550,180 583,164" stroke-dasharray="4 3" />
+            <path d="M553,298 C 500,255 545,195 583,164" stroke-dasharray="4 3" />
             <path d="M617,162 C 660,260 670,340 655,416" stroke-dasharray="4 3" />
             <path d="M553,325 C 585,360 595,385 601,415" stroke-dasharray="4 3" />
             <path d="M650,418 C 760,400 830,300 830,158" />
@@ -106,7 +106,7 @@ function injectLangGraphHelp() {
             <g><rect x="187" y="95" width="146" height="16" fill="var(--bg-card)" /><text x="260" y="107">recipe 있음 · parent 스텝</text></g>
             <g><rect x="175" y="195" width="170" height="16" fill="var(--bg-card)" /><text x="260" y="207">recipe 없음 (parent 제외)</text></g>
             <g><rect x="460" y="122" width="76" height="16" fill="var(--bg-card)" /><text x="498" y="134">성공</text></g>
-            <g><rect x="368" y="222" width="76" height="16" fill="var(--bg-card)" /><text x="406" y="234">적용 실패</text></g>
+            <g><rect x="402" y="222" width="76" height="16" fill="var(--bg-card)" /><text x="440" y="234">적용 실패</text></g>
             <g><rect x="678" y="122" width="76" height="16" fill="var(--bg-card)" /><text x="716" y="134">성공</text></g>
             <g><rect x="470" y="255" width="104" height="16" fill="var(--bg-card)" /><text x="522" y="267">파일수 이하</text></g>
             <g><rect x="560" y="200" width="90" height="16" fill="var(--bg-card)" /><text x="605" y="212">재시도 가능</text></g>
@@ -115,7 +115,7 @@ function injectLangGraphHelp() {
           </g>
 
           <g font-size="13" font-weight="600" text-anchor="middle">
-            <rect x="25" y="122" width="90" height="36" rx="18" fill="var(--accent)" />
+            <rect x="35" y="122" width="70" height="36" rx="18" fill="var(--accent)" />
             <text x="70" y="145" fill="var(--accent-contrast)">START</text>
 
             <rect x="175" y="118" width="110" height="44" rx="8" fill="var(--bg-sunken)" stroke="var(--border)" />
@@ -127,7 +127,7 @@ function injectLangGraphHelp() {
             <rect x="545" y="118" width="110" height="44" rx="8" fill="var(--bg-sunken)" stroke="var(--border)" />
             <text x="600" y="145" fill="var(--text)">verify</text>
 
-            <rect x="785" y="122" width="90" height="36" rx="18" fill="var(--accent)" />
+            <rect x="795" y="122" width="70" height="36" rx="18" fill="var(--accent)" />
             <text x="830" y="145" fill="var(--accent-contrast)">END</text>
 
             <rect x="445" y="298" width="110" height="44" rx="8" fill="var(--bg-sunken)" stroke="var(--border)" />
@@ -141,7 +141,7 @@ function injectLangGraphHelp() {
 
       <h3>Stage 2 — CVE 패치 1건</h3>
       <div class="langgraph-diagram">
-        <svg viewBox="0 0 900 500" role="img" aria-label="Stage 2 LangGraph: START에서 apply를 거쳐 verify로, 실패 시 ai_fix와 오가다가 재시도 소진 시 handoff를 거쳐 END로 간다">
+        <svg viewBox="0 75 900 425" role="img" aria-label="Stage 2 LangGraph: START에서 apply를 거쳐 verify로, 실패 시 ai_fix와 오가다가 재시도 소진 시 handoff를 거쳐 END로 간다">
           <defs>
             <marker id="lg2-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)" />
@@ -149,26 +149,26 @@ function injectLangGraphHelp() {
           </defs>
 
           <g fill="none" stroke="var(--text-muted)" stroke-width="1.5" marker-end="url(#lg2-arrow)">
-            <line x1="115" y1="140" x2="173" y2="140" />
+            <line x1="105" y1="140" x2="173" y2="140" />
             <line x1="287" y1="140" x2="343" y2="140" />
-            <line x1="455" y1="140" x2="543" y2="140" stroke-dasharray="4 3" />
-            <path d="M608,162 C 615,220 590,260 560,296" stroke-dasharray="4 3" />
-            <path d="M470,298 C 500,240 550,180 583,164" stroke-dasharray="4 3" />
-            <path d="M617,162 C 660,260 670,340 655,416" stroke-dasharray="4 3" />
+            <line x1="457" y1="140" x2="793" y2="140" stroke-dasharray="4 3" />
+            <path d="M410,162 C 415,205 520,260 475,298" stroke-dasharray="4 3" />
+            <path d="M460,298 C 370,253 355,207 380,162" stroke-dasharray="4 3" />
+            <path d="M420,162 C 440,200 700,370 655,416" stroke-dasharray="4 3" />
             <path d="M553,325 C 585,360 595,385 601,415" stroke-dasharray="4 3" />
             <path d="M650,418 C 760,400 830,300 830,158" />
           </g>
 
           <g font-size="12" fill="var(--text-muted)" text-anchor="middle">
             <g><rect x="656" y="122" width="120" height="16" fill="var(--bg-card)" /><text x="716" y="134">mvn verify 성공</text></g>
-            <g><rect x="470" y="255" width="104" height="16" fill="var(--bg-card)" /><text x="522" y="267">파일수 이하</text></g>
-            <g><rect x="560" y="200" width="90" height="16" fill="var(--bg-card)" /><text x="605" y="212">재시도 가능</text></g>
-            <g><rect x="600" y="290" width="104" height="16" fill="var(--bg-card)" /><text x="652" y="302">재시도 소진</text></g>
+            <g><rect x="318" y="177" width="104" height="16" fill="var(--bg-card)" /><text x="370" y="189">파일수 이하</text></g>
+            <g><rect x="416" y="220" width="90" height="16" fill="var(--bg-card)" /><text x="461" y="232">재시도 가능</text></g>
+            <g><rect x="510" y="274" width="104" height="16" fill="var(--bg-card)" /><text x="562" y="286">재시도 소진</text></g>
             <g><rect x="555" y="365" width="90" height="16" fill="var(--bg-card)" /><text x="600" y="377">파일수 초과</text></g>
           </g>
 
           <g font-size="13" font-weight="600" text-anchor="middle">
-            <rect x="25" y="122" width="90" height="36" rx="18" fill="var(--accent)" />
+            <rect x="35" y="122" width="70" height="36" rx="18" fill="var(--accent)" />
             <text x="70" y="145" fill="var(--accent-contrast)">START</text>
 
             <rect x="175" y="118" width="110" height="44" rx="8" fill="var(--bg-sunken)" stroke="var(--border)" />
@@ -177,7 +177,7 @@ function injectLangGraphHelp() {
             <rect x="345" y="118" width="110" height="44" rx="8" fill="var(--bg-sunken)" stroke="var(--border)" />
             <text x="400" y="145" fill="var(--text)">verify</text>
 
-            <rect x="785" y="122" width="90" height="36" rx="18" fill="var(--accent)" />
+            <rect x="795" y="122" width="70" height="36" rx="18" fill="var(--accent)" />
             <text x="830" y="145" fill="var(--accent-contrast)">END</text>
 
             <rect x="445" y="298" width="110" height="44" rx="8" fill="var(--bg-sunken)" stroke="var(--border)" />

@@ -3,6 +3,7 @@ single top-level wrapping folder (e.g. GitHub-style ``repo-main/...`` zips)."""
 
 from __future__ import annotations
 
+import logging
 import shutil
 import time
 import zipfile
@@ -15,6 +16,8 @@ from app.ingest.errors import (
     TooManyFilesError,
     UploadTooLargeError,
 )
+
+logger = logging.getLogger(__name__)
 
 _BYTES_PER_MB = 1024 * 1024
 
@@ -34,46 +37,56 @@ def extract_zip(zip_path: Path, dest_dir: Path, settings: Settings) -> Path:
     upload size, extracted size, and file count against settings BEFORE
     writing any bytes (a cheap metadata-only pre-scan), so a rejected upload
     never partially extracts."""
-    upload_max_bytes = settings.upload_max_mb * _BYTES_PER_MB
-    extracted_max_bytes = settings.upload_max_extracted_mb * _BYTES_PER_MB
+    logger.info("실행: zip 추출 %s -> %s", zip_path, dest_dir)
+    started_at = time.monotonic()
 
-    upload_size = zip_path.stat().st_size
-    if upload_size > upload_max_bytes:
-        raise UploadTooLargeError(
-            f"upload is {upload_size / _BYTES_PER_MB:.1f}MB, exceeds UPLOAD_MAX_MB={settings.upload_max_mb}"
-        )
+    try:
+        upload_max_bytes = settings.upload_max_mb * _BYTES_PER_MB
+        extracted_max_bytes = settings.upload_max_extracted_mb * _BYTES_PER_MB
 
-    dest_dir.mkdir(parents=True, exist_ok=True)
-
-    with zipfile.ZipFile(zip_path) as zf:
-        infos = zf.infolist()
-
-        file_count = sum(1 for i in infos if not i.is_dir())
-        if file_count > settings.upload_max_files:
-            raise TooManyFilesError(
-                f"zip contains {file_count} files, exceeds UPLOAD_MAX_FILES={settings.upload_max_files}"
+        upload_size = zip_path.stat().st_size
+        if upload_size > upload_max_bytes:
+            raise UploadTooLargeError(
+                f"upload is {upload_size / _BYTES_PER_MB:.1f}MB, exceeds UPLOAD_MAX_MB={settings.upload_max_mb}"
             )
 
-        total_extracted = sum(i.file_size for i in infos)
-        if total_extracted > extracted_max_bytes:
-            raise ExtractedTooLargeError(
-                f"extracted size would be {total_extracted / _BYTES_PER_MB:.1f}MB, "
-                f"exceeds UPLOAD_MAX_EXTRACTED_MB={settings.upload_max_extracted_mb}"
-            )
+        dest_dir.mkdir(parents=True, exist_ok=True)
 
-        # Path-safety pre-check for every member before writing anything.
-        for info in infos:
-            _safe_member_path(dest_dir, info.filename)
+        with zipfile.ZipFile(zip_path) as zf:
+            infos = zf.infolist()
 
-        for info in infos:
-            target = _safe_member_path(dest_dir, info.filename)
-            if info.is_dir():
-                target.mkdir(parents=True, exist_ok=True)
-                continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with zf.open(info) as src, open(target, "wb") as dst:
-                shutil.copyfileobj(src, dst)
+            file_count = sum(1 for i in infos if not i.is_dir())
+            if file_count > settings.upload_max_files:
+                raise TooManyFilesError(
+                    f"zip contains {file_count} files, exceeds UPLOAD_MAX_FILES={settings.upload_max_files}"
+                )
 
+            total_extracted = sum(i.file_size for i in infos)
+            if total_extracted > extracted_max_bytes:
+                raise ExtractedTooLargeError(
+                    f"extracted size would be {total_extracted / _BYTES_PER_MB:.1f}MB, "
+                    f"exceeds UPLOAD_MAX_EXTRACTED_MB={settings.upload_max_extracted_mb}"
+                )
+
+            # Path-safety pre-check for every member before writing anything.
+            for info in infos:
+                _safe_member_path(dest_dir, info.filename)
+
+            for info in infos:
+                target = _safe_member_path(dest_dir, info.filename)
+                if info.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(info) as src, open(target, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+    except Exception as exc:
+        elapsed = time.monotonic() - started_at
+        logger.warning("종료: zip 추출 실패 (%.1fs): %s", elapsed, exc)
+        raise
+
+    elapsed = time.monotonic() - started_at
+    logger.info("종료: zip 추출 (파일 %d개, %.1fs)", file_count, elapsed)
     return dest_dir
 
 
