@@ -1,6 +1,6 @@
 # Maven Stack Upgrade Tool — 아키텍처
 
-- 작성일: 2026-08-07 (2026-08-11 개정: Stage 0 버전 확인 게이트, 작업 취소/삭제, 파일별 diff 뷰어, LLM 모델 설정 반영. 2026-08-12 개정: job 상태 stage1/stage2 분리 + 1단계 인수인계 후 재개, 사내 parent POM 목표 버전 전이, `index.html` 제출 폼/설명 콘텐츠와 `job.html` 진행 상황 뷰 분리, Stage 0가 `work/` 대신 `source/`를 분석하도록 변경 반영)
+- 작성일: 2026-08-07 (2026-08-11 개정: Stage 0 버전 확인 게이트, 작업 취소/삭제, 파일별 diff 뷰어, LLM 모델 설정 반영. 2026-08-12 개정: job 상태 stage1/stage2 분리 + 1단계 인수인계 후 재개, 사내 parent POM 목표 버전 전이, `index.html` 제출 폼/설명 콘텐츠와 `job.html` 진행 상황 뷰 분리, Stage 0가 `work/` 대신 `source/`를 분석하도록 변경, 사내 parent POM 스텝을 재분석 없이 parent 교체 전 스택 기준 계획의 맨 앞으로 반영)
 - 이 문서는 실제 구현(`backend/`, `frontend/`)을 기준으로 정리한 아키텍처 문서다. 설계 배경/의사결정 근거는 [`docs/superpowers/specs/2026-08-06-oss-dependency-governance-design.md`](superpowers/specs/2026-08-06-oss-dependency-governance-design.md)(이하 "설계 스펙")를 참고한다. 이 문서는 그 스펙이 실제로 어떤 모듈/파일로 구현됐는지를 코드 기준으로 매핑한다.
 
 ## 1. 한 줄 요약
@@ -175,7 +175,8 @@ sequenceDiagram
 
 - **감지**(`ingest/maven_detect.detect_external_parent`): `source/`(Stage 0가 실행되는 곳, 위 참고)의 원본(effective 아님) `pom.xml`의 `<parent>`가 알려진 공개 parent(`_PUBLIC_PARENT_ALLOWLIST`, 현재는 `spring-boot-starter-parent`만) 목록에 없으면 "사내 parent POM일 수 있다"고 판단한다. `run_pipeline`이 Stage 0의 `inventory` 이벤트(분석 패널)와 `awaiting_version_approval`의 `status` 이벤트(`detected_parent` 필드) 양쪽에 이 결과를 실어 보낸다.
 - **입력**: 확인 패널에 "사내 parent POM 목표 버전" 입력창이 조건부로 뜬다(감지됐을 때만). `POST /jobs/{id}/confirm-version`의 `parent_target_version`으로 전달 — 비워두면(기본) 이 프로젝트만 마이그레이션하고 parent는 그대로 둔다. 감지된 현재 parent 버전과 같은 값을 넣으면 409(출력 버전과 동일한 정책).
-- **적용**(Stage 1, `orchestration/multi_step.run_stage1_migration`): `parent_target_version`이 있으면 계획의 맨 앞에 `parent_pom` 스텝을 하나 끼워 넣는다 — OpenRewrite 레시피가 아니라 `mvnrewrite/parent_patch.patch_parent_version`(XML `<parent><version>` 텍스트를 직접 교체하는 mechanical 패치, `mvn versions:update-parent`가 지정한 값보다 높은 버전으로 새는 걸 실측으로 확인해 직접 XML 조작으로 바꿨다)로 처리하지만, 검증/커밋/실패 시 인수인계 가이드는 다른 스텝과 동일한 Stage 1 그래프(§7.2)를 그대로 탄다. 이 스텝이 성공하면 `mvn effective-pom`을 다시 돌려 재분석하고(새 parent 버전이 가져온 스택으로), 그 값으로 나머지 계획(`build_migration_plan`)을 다시 세운다 — 막혔던 지점을 저장해두지 않고, 재분석된 현재 상태가 자연스럽게 이미 끝난 스텝을 계획에서 빼준다(§7.6의 인수인계 후 재개가 재사용하는 것과 같은 패턴).
+- **계획**(Stage 1, `orchestration/multi_step.run_stage1_migration`): 계획은 **parent 교체 전** 스택(위 감지에 쓰인 `source/` 분석 결과, `detected` 인자로 전달됨)을 기준으로 한 번에 세운다(`build_migration_plan`) — `parent_target_version`이 있으면 그 계획의 **맨 앞**에 `parent_pom` 스텝 하나만 끼워 넣는다. 진행 로그에 "마이그레이션 계획 수립: 총 N단계"로 전체(parent 스텝 포함)가 한 번에 표시된다(2026-08-12 변경 — 이전엔 parent 스텝을 먼저 실행하고 성공하면 `mvn effective-pom`을 다시 돌려 나머지 계획을 재분석 후 세웠으나, 새 parent 버전이 가져올 스택을 미리 알 수 없어 계획을 먼저 보여줄 수 없다는 문제가 있어 지금 방식으로 단순화했다).
+- **적용**: `parent_pom` 스텝은 OpenRewrite 레시피가 아니라 `mvnrewrite/parent_patch.patch_parent_version`(XML `<parent><version>` 텍스트를 직접 교체하는 mechanical 패치, `mvn versions:update-parent`가 지정한 값보다 높은 버전으로 새는 걸 실측으로 확인해 직접 XML 조작으로 바꿨다)로 처리하지만, 검증/커밋/실패 시 인수인계 가이드는 다른 스텝과 동일한 Stage 1 그래프(§7.2)를 그대로 탄다. 재분석은 하지 않으므로, parent가 실제로 스택 일부를 이미 올려놨다면 그 뒤 스텝(예: Spring Boot 레시피)이 이미 반영된 변경 위에서 실행될 수 있다 — 각 스텝 자체가 여전히 자가검증 루프(§7.2)를 거치므로, 이미 목표에 도달해 있다면 레시피가 사실상 no-op으로 끝나고 검증만 통과한다(§7.1의 "이미 목표 버전이면 스텝을 안 만든다" 판정은 parent 교체 전 스택 기준이라 여기엔 적용되지 않는다는 점에 주의).
 - **목표 버전을 안 준 경우**: parent가 감지됐는데도 `parent_target_version`을 비워뒀다면, 1단계가 끝난 뒤 리포트에 "이 프로젝트만으로는 목표에 도달할 수 없습니다" 안내 문구가 남는다(`run_pipeline_resume_after_version_confirm`).
 
 ## 5. 인입 파이프라인 (`ingest/`, `checkpoint/`)
@@ -278,7 +279,7 @@ stateDiagram-v2
 
 1. **검증** (`orchestration/multi_step.verify_after_manual_fix`) — `mvn test-compile` 한 번만 실행한다. AI 재시도는 하지 않는다 — 사람이 직접 고친 결과를 확인만 하는 동작이라, AI를 다시 태우면 사람의 의도와 다르게 또 고칠 위험이 있다(job #44에서 AI가 원래 맞았던 import를 오히려 틀리게 고친 사례가 실제로 있었다 — `docs/lessons-learned/2026-08-11-jackson3-objectmapper-migration.md`).
 2. **검증 실패** → 아무것도 커밋하지 않고 `stage1_needs_handoff`로 되돌아간다. `output/handoff/stage1-guide.md`를 최신 빌드 출력으로 덮어써서 재시도할 수 있게 한다.
-3. **검증 성공** → 체크포인트 커밋 후 `mvn effective-pom`을 다시 돌려 현재 `work/`의 실제 스택을 재분석하고(사내 parent POM 기능, §4.2와 동일한 재분석 패턴), `run_stage1_migration`을 그 값으로 다시 호출해 나머지 계획을 이어서 실행한다 — 막혔던 스텝이 몇 번째였는지는 어디에도 저장하지 않는다. 재분석된 버전이 이미 반영된 수정을 나타내므로 `build_migration_plan`이 자연스럽게 다음 스텝부터 계획을 세운다.
+3. **검증 성공** → 체크포인트 커밋 후 `mvn effective-pom`을 다시 돌려 현재 `work/`의 실제 스택을 재분석하고, `run_stage1_migration`을 그 값으로 다시 호출해 나머지 계획을 이어서 실행한다 — 막혔던 스텝이 몇 번째였는지는 어디에도 저장하지 않는다. 재분석된 버전이 이미 반영된 수정을 나타내므로 `build_migration_plan`이 자연스럽게 다음 스텝부터 계획을 세운다. (§4.2의 사내 parent POM 스텝과는 다르게, 여기서는 재분석이 여전히 맞다 — 사람이 `work/`에 뭘 고쳤는지 도구가 미리 알 방법이 없으므로, 재개 시점의 실제 상태를 다시 봐야 한다.)
 4. 재개가 끝까지 성공하면 1차 시도 때 남은 `output/handoff/stage1-guide.md`를 지운다 — 안 지우면 성공한 job인데도 "아직 인수인계 필요"라는 낡은 파일이 결과물 목록에 남는다. 또 막히면 새 가이드로 덮어쓰고 다시 `stage1_needs_handoff`(반복 가능).
 
 `report_markdown`은 1차 시도 리포트 뒤에 이번 재개 결과를 이어붙인다(`run_pipeline_resume_stage2`와 동일한 패턴).

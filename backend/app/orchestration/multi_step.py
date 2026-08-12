@@ -17,9 +17,8 @@ from typing import Literal
 from app.checkpoint.git_repo import commit_checkpoint, current_head, diff_since, reset_to_checkpoint
 from app.config import Settings
 from app.handoff.guide_builder import build_handoff_guide
-from app.mvnrewrite.mvn_client import mvn_effective_pom, mvn_test_compile
-from app.mvnrewrite.pom_parser import DetectedVersions, extract_versions
-from app.mvnrewrite.subprocess_runner import build_log_path
+from app.mvnrewrite.mvn_client import mvn_test_compile
+from app.mvnrewrite.pom_parser import DetectedVersions
 from app.orchestration.graph_stage1 import run_stage1_step
 from app.orchestration.planning import MigrationPlan, PlanStep, build_migration_plan
 from app.orchestration.progress import LogFn, noop_log
@@ -52,11 +51,7 @@ async def run_stage1_migration(
     parent_target_version: str | None = None,
     on_log: LogFn = noop_log,
 ) -> MigrationRunResult:
-    # graph_stage1.apply_node derives output_dir the same way -- not taken as
-    # a parameter here so existing callers (and their tests) don't break.
-    output_dir = work_dir.parent / "output"
     outcomes: list[StepOutcome] = []
-    all_steps: list[PlanStep] = []
     handoff_guide: str | None = None
 
     async def _run_one_step(idx: int, total: int, step) -> bool:
@@ -92,6 +87,17 @@ async def run_stage1_migration(
         await on_log(f"[{idx}/{total}] 막힘 — AI 인수인계 가이드 생성됨")
         return False
 
+    # Plan built once, upfront, from the stack as it was detected *before*
+    # any patching starts (Stage 0's source/ analysis, spec: docs/
+    # superpowers/specs/2026-08-11-job-status-stage-split-design.md's
+    # §4.2 in architecture.md) -- not re-derived after the parent step, even
+    # though a new 사내 parent POM(BOM 겸용) version could in principle bring
+    # some of this stack forward on its own. The parent step (if requested)
+    # is simply step 1 of this same plan, not a separate phase with its own
+    # re-analysis -- matches the user-facing "one upfront N-step plan"
+    # framing (2026-08-12 decision).
+    plan = build_migration_plan(detected, target_boot=target_boot, target_java=target_java, target_ai=target_ai)
+    all_steps: list[PlanStep] = list(plan.steps)
     if parent_target_version:
         parent_step = PlanStep(
             kind="parent_pom",
@@ -100,52 +106,16 @@ async def run_stage1_migration(
             artifact=None,
             target_version=parent_target_version,
         )
-        all_steps.append(parent_step)
-        if not await _run_one_step(1, 1, parent_step):
-            final_diff = diff_since(work_dir, settings, baseline_commit)
-            report = build_report(MigrationPlan(steps=all_steps), outcomes, handoff_guide_path=Path("output/handoff"))
-            return MigrationRunResult(
-                plan=MigrationPlan(steps=all_steps),
-                outcomes=outcomes,
-                status="needs_handoff",
-                final_diff=final_diff,
-                report=report,
-                handoff_guide=handoff_guide,
-            )
+        all_steps.insert(0, parent_step)
 
-        # The plan built from Stage 0's (now stale) detected versions would
-        # redo/misjudge whatever the new parent already brought -- re-derive
-        # the actual current stack before planning the rest (spec: docs/
-        # superpowers/specs/2026-08-11-internal-parent-pom-target-version-
-        # design.md).
-        await on_log("[사내 parent POM] 완료 — 스택 재분석 중")
-        effective_pom_path = output_dir / "effective-pom.xml"
-        await mvn_effective_pom(
-            work_dir,
-            effective_pom_path,
-            settings,
-            log_path=build_log_path(output_dir, "stage1", "mvn-effective-pom-post-parent"),
-        )
-        detected = extract_versions(effective_pom_path)
-        await on_log(
-            f"재분석 결과: Java {detected.java_version} / Spring Boot {detected.spring_boot_version} / "
-            f"Spring Cloud {detected.spring_cloud_version} / Spring AI {detected.spring_ai_version}"
-        )
+    if all_steps:
+        numbered = "\n".join(f"  {i}. {step.description}" for i, step in enumerate(all_steps, 1))
+        await on_log(f"마이그레이션 계획 수립: 총 {len(all_steps)}단계\n{numbered}")
 
-    plan = build_migration_plan(detected, target_boot=target_boot, target_java=target_java, target_ai=target_ai)
-    all_steps.extend(plan.steps)
+    status: RunStatus = "success" if all_steps else "no_gap"
+    total = len(all_steps)
 
-    if plan.steps:
-        numbered = "\n".join(f"  {i}. {step.description}" for i, step in enumerate(plan.steps, 1))
-        await on_log(f"마이그레이션 계획 수립: 총 {len(plan.steps)}단계\n{numbered}")
-
-    # parent_target_version having run at all is itself real progress, even
-    # if the remaining plan turns out empty (parent alone reached target) --
-    # that's "success", not "no_gap" (nothing to do at all).
-    status: RunStatus = "success" if (parent_target_version or plan.steps) else "no_gap"
-    total = len(plan.steps)
-
-    for idx, step in enumerate(plan.steps, 1):
+    for idx, step in enumerate(all_steps, 1):
         if not await _run_one_step(idx, total, step):
             status = "needs_handoff"
             break
