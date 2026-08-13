@@ -223,9 +223,7 @@ async def run_pipeline(
         # get added alongside them -- and nothing else in this codebase
         # reads source/ again after ingest, so that's harmless.
         effective_pom_path = output_dir / "effective-pom.xml"
-        await mvn_effective_pom(
-            source_dir, effective_pom_path, settings, log_path=build_log_path(output_dir, "ingest", "mvn-effective-pom")
-        )
+        await mvn_effective_pom(source_dir, effective_pom_path, settings, log_path=build_log_path(output_dir, "ingest", "mvn-effective-pom"))
         detected = extract_versions(effective_pom_path)
 
         # A <parent> on the ingested project's own root pom.xml that isn't a
@@ -240,9 +238,6 @@ async def run_pipeline(
         detected_parent = detect_external_parent(source_dir / "pom.xml")
         await emit("inventory", {**asdict(detected), "detected_parent": asdict(detected_parent) if detected_parent else None})
 
-        current_version, _version_source = read_declared_version(effective_pom_path)
-        suggested_version = compute_stage0_output_version(current_version, run_stage1) if current_version else None
-
         await log("마이그레이션 전 취약점 스캔 시작")
         baseline_scan_started_at = time.monotonic()
         baseline_vulns = await run_combined_scan(source_dir, output_dir, settings)
@@ -250,6 +245,9 @@ async def run_pipeline(
         baseline_scan_elapsed = time.monotonic() - baseline_scan_started_at
         await log(f"마이그레이션 전 취약점 스캔 완료 ({baseline_scan_elapsed:.1f}s)")
         await log(f"{len(baseline_vulns)}개 취약점 발견 (임계값 이상, 마이그레이션 전)")
+
+        current_version, _version_source = read_declared_version(effective_pom_path)
+        suggested_version = compute_stage0_output_version(current_version, run_stage1) if current_version else None
 
         await set_job_status(session_factory, job_id, "awaiting_version_approval")
         await emit(
@@ -550,10 +548,7 @@ async def run_pipeline_resume_stage1_after_handoff(
         baseline = commit_checkpoint(work_dir, settings, "checkpoint: 인수인계 후 수동 수정 확인됨")
 
         effective_pom_path = output_dir / "effective-pom.xml"
-        await mvn_effective_pom(
-            work_dir, effective_pom_path, settings,
-            log_path=build_log_path(output_dir, "stage1", "mvn-effective-pom-resume"),
-        )
+        await mvn_effective_pom(work_dir, effective_pom_path, settings, log_path=build_log_path(output_dir, "stage1", "mvn-effective-pom-resume"))
         detected = extract_versions(effective_pom_path)
         await log(
             f"재분석 결과: Java {detected.java_version} / Spring Boot {detected.spring_boot_version} / "

@@ -155,8 +155,8 @@ sequenceDiagram
 1·2단계 중 하나라도 선택되면, 실제 마이그레이션/패치에 들어가기 전에 항상 이 게이트를 거친다. **아래 1~3번은 전부 `source/`(인입 직후, 아직 손 안 댄 원본)를 대상으로 실행된다** — `work/`는 인입 중에 이미 그 시점의 `source/`를 복사해 baseline 커밋까지 끝낸 뒤라, Stage 0가 `source/`에서 뭘 하든(3번의 취약점 스캔이 내부적으로 돌리는 실제 `mvn install` 포함) `work/`엔 영향이 없다(§5):
 
 1. `mvn effective-pom`으로 현재 버전/스택을 분석(`inventory` 이벤트).
-2. `versioning/artifact_version.compute_stage0_output_version`으로 출력 버전을 자동 제안 — **1단계가 선택됐으면 MAJOR, 아니면 MINOR**를 증가시킨다(스택이 이미 목표와 같아도 마찬가지). 감지된 현재 버전이 `MAJOR.MINOR.PATCH` 형태가 아니면 정규화만 하고 그대로 반환.
-3. 마이그레이션 전 베이스라인 취약점 스캔(`vulnerabilities_baseline` 이벤트, §8.1과 동일한 `run_combined_scan`).
+2. 마이그레이션 전 베이스라인 취약점 스캔(`vulnerabilities_baseline` 이벤트, §8.1과 동일한 `run_combined_scan`).
+3. `versioning/artifact_version.compute_stage0_output_version`으로 출력 버전을 자동 제안 — **1단계가 선택됐으면 MAJOR, 아니면 MINOR**를 증가시킨다(스택이 이미 목표와 같아도 마찬가지). 감지된 현재 버전이 `MAJOR.MINOR.PATCH` 형태가 아니면 정규화만 하고 그대로 반환. 스캔 뒤로 옮겨졌을 뿐 스캔 결과에 의존하지는 않는다 — `effective_pom_path`만 있으면 되는 순수 계산이라 순서가 상관없어서, 로그 순서를 "분석 → 스캔 → (버전 계산은 조용히) → 승인 대기"로 자연스럽게 맞췄다(2026-08-13 변경).
 4. Job 상태를 `awaiting_version_approval`로 바꾸고 `current_version`/`suggested_version`을 `status` 이벤트에 실어 멈춘다 — **살아있는 백그라운드 Task 없이 리턴**(§10의 `awaiting_approval`과 같은 설계).
 
 사람이 `POST /jobs/{id}/confirm-version`으로 값을 확인해야 다음 단계로 넘어간다:
@@ -464,6 +464,7 @@ Windows에서는 `uvicorn --reload`를 쓰면 안 된다 — reload가 이벤트
 ## 16. 참고
 
 - LangGraph 그래프별 노드 상세(Stage 1/2 자가검증 루프): [`docs/langgraph-orchestration.md`](langgraph-orchestration.md)
+- `pipeline.py`의 최상위 함수 4개가 서로 어떻게 이어지는지 그래프로 정리: [`docs/pipeline-flow.md`](pipeline-flow.md)
 - 설계 배경/의사결정 근거: [`docs/superpowers/specs/2026-08-06-oss-dependency-governance-design.md`](superpowers/specs/2026-08-06-oss-dependency-governance-design.md)
 - Stage 0 도입 배경(§4.1) — 출력 버전 자동화 + 스캔 재배치: [`docs/superpowers/specs/2026-08-10-stage0-version-scan-restructure-design.md`](superpowers/specs/2026-08-10-stage0-version-scan-restructure-design.md), 구현 순서: [`docs/superpowers/plans/2026-08-10-stage0-version-scan-restructure-plan.md`](superpowers/plans/2026-08-10-stage0-version-scan-restructure-plan.md)
 - 백엔드 실행 방법: [`backend/README.md`](../backend/README.md)

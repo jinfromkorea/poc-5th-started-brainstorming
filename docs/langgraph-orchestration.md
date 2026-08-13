@@ -1,7 +1,7 @@
 # LangGraph 오케스트레이션 — Stage 1 / Stage 2 자가검증 루프
 
 - 작성일: 2026-08-08 (2026-08-11 개정: Stage 0 도입으로 바뀐 외부 루프 호출자 반영)
-- 이 문서는 `backend/app/orchestration/` 중 실제로 **LangGraph `StateGraph`로 구현된 부분만** 그래프 단위로 상세히 정리한다. 전체 파이프라인(인입 → Stage 0 → Stage1 → Stage2 → 산출물) 흐름은 [`docs/architecture.md`](architecture.md) §4·§4.1·§7·§8을 참고하고, 이 문서는 그중 "LangGraph가 실제로 어디에 있고 각 노드가 뭘 하는지"에만 집중한다.
+- 이 문서는 `backend/app/orchestration/` 중 실제로 **LangGraph `StateGraph`로 구현된 부분만** 그래프 단위로 상세히 정리한다. 전체 파이프라인(인입 → Stage 0 → Stage1 → Stage2 → 산출물) 흐름은 [`docs/architecture.md`](architecture.md) §4·§4.1·§7·§8을, `pipeline.py`의 최상위 함수 4개가 서로 어떻게 이어지는지는 [`docs/pipeline-flow.md`](pipeline-flow.md)를 참고하고, 이 문서는 그중 "LangGraph가 실제로 어디에 있고 각 노드가 뭘 하는지"에만 집중한다.
 
 ## 1. 어디에 LangGraph가 있는가
 
