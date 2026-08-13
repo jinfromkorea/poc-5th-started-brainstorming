@@ -72,10 +72,26 @@ flowchart TD
             RC_S1_GATE -.->|"목표 기술 스택 충족"| RC_S1_NOGAP["no_gap"]
             RC_S1_GATE -.->|"있음"| RC_S1_LOOP
             RC_S1_LOOP{"다음?"}
-            RC_S1_LOOP -.->|"다음 스텝"| RC_S1_STEP["Stage 1 LangGraph 1회 실행<br/>(plan→apply→verify→ai_fix→handoff)"]
-            RC_S1_STEP -.->|"success"| RC_S1_COMMIT["checkpoint 커밋<br/>(receipe 기록)"]
+
+            subgraph STAGE1_GRAPH["Stage 1 LangGraph 1회 실행<br/>(graph_stage1.build_stage1_graph)"]
+                G_PLAN["plan<br/>(plan_precomputed 아니면<br/>카탈로그에서 다음 레시피 조회)"]
+                G_PLAN -.->|"이미 목표 버전"| G_END_S(["success"])
+                G_PLAN -.->|"recipe 없음<br/>(카탈로그에 없음)"| G_AIFIX
+                G_PLAN -.->|"recipe 있음"| G_APPLY["apply<br/>(OpenRewrite 레시피 실행,<br/>결과 무관하게 즉시 커밋)"]
+                G_APPLY -.->|"exit=0"| G_VERIFY["verify<br/>(mvn test-compile)"]
+                G_APPLY -.->|"exit≠0"| G_AIFIX["ai_fix<br/>(에이전트: read/edit/<br/>run_build/run_recipe)"]
+                G_VERIFY -.->|"성공"| G_END_S
+                G_VERIFY -.->|"실패, attempt < max_attempts"| G_AIFIX
+                G_VERIFY -.->|"실패, attempt >= max_attempts"| G_HANDOFF["handoff"]
+                G_AIFIX -.->|"변경파일 ≤ 상한"| G_VERIFY
+                G_AIFIX -.->|"변경파일 > 상한"| G_HANDOFF
+                G_HANDOFF --> G_END_H(["needs_handoff"])
+            end
+
+            RC_S1_LOOP -.->|"다음 스텝"| G_PLAN
+            G_END_S -.-> RC_S1_COMMIT["checkpoint 커밋<br/>(receipe 기록)"]
             RC_S1_COMMIT --> RC_S1_LOOP
-            RC_S1_STEP -.->|"needs_handoff"| RC_S1_RESET["reset_to_checkpoint<br/>(AI 수정 시도만 롤백,<br/>레시피 커밋은 유지)"]
+            G_END_H -.-> RC_S1_RESET["reset_to_checkpoint<br/>(AI 수정 시도만 롤백,<br/>레시피 커밋은 유지)"]
             RC_S1_RESET --> RC_S1_GUIDE["build_handoff_guide"]
             RC_S1_GUIDE --> RC_S1_STOP["중단<br/>(뒤 스텝 실행 안 함)"]
         end
